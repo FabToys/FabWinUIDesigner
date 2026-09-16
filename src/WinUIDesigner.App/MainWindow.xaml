@@ -46,20 +46,24 @@
                             Background="White"
                             BorderBrush="#FFBFBFBF"
                             BorderThickness="1"
-                            Tapped="DesignSurfaceHost_Tapped" />
+                            PointerPressed="DesignSurfaceHost_PointerPressed"
+                            PointerMoved="DesignSurfaceHost_PointerMoved"
+                            PointerReleased="DesignSurfaceHost_PointerReleased" />
 
                         <!-- Selection adorner overlay: same Margin/alignment as DesignSurfaceHost so their
                              local (0,0) coincide, letting TransformToVisual(DesignSurfaceHost) bounds be
-                             used directly as Canvas.Left/Top here. -->
+                             used directly as Canvas.Left/Top here. Not hit-test-disabled at the Canvas
+                             level (unlike M3) since the resize handles now need real pointer input; the
+                             decorative pieces (rectangle/label) opt out individually instead. -->
                         <Canvas
                             x:Name="AdornerCanvas"
                             Margin="16"
                             HorizontalAlignment="Left"
-                            VerticalAlignment="Top"
-                            IsHitTestVisible="False">
+                            VerticalAlignment="Top">
                             <Rectangle
                                 x:Name="SelectionRectangle"
                                 Visibility="Collapsed"
+                                IsHitTestVisible="False"
                                 Stroke="#FF5B7C99"
                                 StrokeThickness="1"
                                 StrokeDashArray="4,2"
@@ -67,12 +71,23 @@
                             <Border
                                 x:Name="SelectionLabel"
                                 Visibility="Collapsed"
+                                IsHitTestVisible="False"
                                 Background="#FFE4EEF6"
                                 BorderBrush="#FF5B7C99"
                                 BorderThickness="1"
                                 Padding="4,1">
                                 <TextBlock x:Name="SelectionLabelText" FontSize="11" Foreground="#FF1F3A52" />
                             </Border>
+
+                            <!-- Resize handles: 4 corners + 4 edge midpoints, VS-style small squares. -->
+                            <Rectangle x:Name="HandleNW" Tag="NW" Visibility="Collapsed" Width="7" Height="7" Fill="White" Stroke="#FF5B7C99" StrokeThickness="1" PointerPressed="ResizeHandle_PointerPressed" PointerMoved="ResizeHandle_PointerMoved" PointerReleased="ResizeHandle_PointerReleased" />
+                            <Rectangle x:Name="HandleN" Tag="N" Visibility="Collapsed" Width="7" Height="7" Fill="White" Stroke="#FF5B7C99" StrokeThickness="1" PointerPressed="ResizeHandle_PointerPressed" PointerMoved="ResizeHandle_PointerMoved" PointerReleased="ResizeHandle_PointerReleased" />
+                            <Rectangle x:Name="HandleNE" Tag="NE" Visibility="Collapsed" Width="7" Height="7" Fill="White" Stroke="#FF5B7C99" StrokeThickness="1" PointerPressed="ResizeHandle_PointerPressed" PointerMoved="ResizeHandle_PointerMoved" PointerReleased="ResizeHandle_PointerReleased" />
+                            <Rectangle x:Name="HandleW" Tag="W" Visibility="Collapsed" Width="7" Height="7" Fill="White" Stroke="#FF5B7C99" StrokeThickness="1" PointerPressed="ResizeHandle_PointerPressed" PointerMoved="ResizeHandle_PointerMoved" PointerReleased="ResizeHandle_PointerReleased" />
+                            <Rectangle x:Name="HandleE" Tag="E" Visibility="Collapsed" Width="7" Height="7" Fill="White" Stroke="#FF5B7C99" StrokeThickness="1" PointerPressed="ResizeHandle_PointerPressed" PointerMoved="ResizeHandle_PointerMoved" PointerReleased="ResizeHandle_PointerReleased" />
+                            <Rectangle x:Name="HandleSW" Tag="SW" Visibility="Collapsed" Width="7" Height="7" Fill="White" Stroke="#FF5B7C99" StrokeThickness="1" PointerPressed="ResizeHandle_PointerPressed" PointerMoved="ResizeHandle_PointerMoved" PointerReleased="ResizeHandle_PointerReleased" />
+                            <Rectangle x:Name="HandleS" Tag="S" Visibility="Collapsed" Width="7" Height="7" Fill="White" Stroke="#FF5B7C99" StrokeThickness="1" PointerPressed="ResizeHandle_PointerPressed" PointerMoved="ResizeHandle_PointerMoved" PointerReleased="ResizeHandle_PointerReleased" />
+                            <Rectangle x:Name="HandleSE" Tag="SE" Visibility="Collapsed" Width="7" Height="7" Fill="White" Stroke="#FF5B7C99" StrokeThickness="1" PointerPressed="ResizeHandle_PointerPressed" PointerMoved="ResizeHandle_PointerMoved" PointerReleased="ResizeHandle_PointerReleased" />
                         </Canvas>
                     </Grid>
                 </ScrollViewer>
@@ -107,6 +122,7 @@
             <StackPanel Grid.Row="0" Padding="8" Spacing="8" BorderBrush="Gray" BorderThickness="0,0,0,1">
                 <TextBlock Text="File" FontWeight="Bold" />
                 <Button x:Name="OpenButton" Content="Open..." Click="OpenButton_Click" HorizontalAlignment="Stretch" />
+                <Button x:Name="SaveButton" Content="Save" Click="SaveButton_Click" HorizontalAlignment="Stretch" IsEnabled="False" />
                 <TextBlock x:Name="CurrentFileText" Text="(no file open)" TextWrapping="Wrap" />
             </StackPanel>
 
