@@ -1,4 +1,5 @@
 using Microsoft.UI;
+using Microsoft.UI.Input;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
@@ -13,6 +14,7 @@ using Windows.Graphics.Imaging;
 using Windows.Storage;
 using Windows.Storage.Pickers;
 using Windows.System;
+using Windows.UI.Core;
 using WinUIDesigner.Core;
 using DesignElement = WinUIDesigner.Document.DesignElement;
 using XamlDocument = WinUIDesigner.Document.XamlDocument;
@@ -34,6 +36,19 @@ public sealed partial class MainWindow : Window
     private IReadOnlyDictionary<UIElement, DesignElement> _liveToDesign = new Dictionary<UIElement, DesignElement>();
     private UIElement? _selectedLiveElement;
     private DesignElement? _selectedDesignElement;
+
+    // Undo/Redo: whole-document text snapshots rather than a command pattern - simple, and
+    // cheap enough at our document sizes. _pendingUndoSnapshot is set by BeginUndoableChange()
+    // right before a mutation starts and consumed by CommitUndoableChange() right after it
+    // succeeds, so an edit that's validated-and-rejected (e.g. bad property input) never
+    // pollutes the undo stack.
+    private readonly Stack<string> _undoStack = new();
+    private readonly Stack<string> _redoStack = new();
+    private string? _pendingUndoSnapshot;
+
+    // Dirty tracking for the Save button: compared against the document text as of the last
+    // load/save, not a simple bool, so undoing back to that exact state re-disables Save too.
+    private string? _lastSavedXaml;
 
     // Move drag state (set while a PointerPressed-on-an-element -> PointerMoved -> PointerReleased
     // sequence is in progress on DesignSurfaceHost).
@@ -60,7 +75,10 @@ public sealed partial class MainWindow : Window
 
         LoadPanelLayout();
         AttachColumnSplitter(ToolboxSplitter, ToolboxColumn, minWidth: 100, maxWidth: 400, SavePanelLayout);
-        AttachRowSplitter(DesignXamlSplitter, XamlSourceRow, minHeight: 80, maxHeight: 600, SavePanelLayout);
+        // invert:true here - XamlSourceRow is the row *after* this splitter (DesignSurfaceRow,
+        // splitter, XamlSourceRow), so dragging up should grow it, unlike FilePropertiesSplitter
+        // below where the controlled row (FilePanelRow) comes *before* the splitter.
+        AttachRowSplitter(DesignXamlSplitter, XamlSourceRow, minHeight: 80, maxHeight: 600, SavePanelLayout, invert: true);
         AttachRowSplitter(FilePropertiesSplitter, FilePanelRow, minHeight: 80, maxHeight: 600, SavePanelLayout);
         Closed += (_, _) => SavePanelLayout();
 
@@ -107,6 +125,8 @@ public sealed partial class MainWindow : Window
         }
 
         _currentDocument.Save(_currentFilePath);
+        _lastSavedXaml = _currentDocument.ToXamlString();
+        UpdateSaveButtonState();
     }
 
     private async void OpenFolderButton_Click(object sender, RoutedEventArgs e)
@@ -222,7 +242,12 @@ public sealed partial class MainWindow : Window
             _currentDocument = doc;
             _currentFilePath = path;
             CurrentFileText.Text = path;
-            SaveButton.IsEnabled = true;
+
+            // A freshly-loaded file has no undo history and nothing unsaved yet.
+            _undoStack.Clear();
+            _redoStack.Clear();
+            _pendingUndoSnapshot = null;
+            _lastSavedXaml = doc.ToXamlString();
 
             RefreshDesignSurfaceFromDocument();
         }
@@ -339,6 +364,8 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        BeginUndoableChange();
+
         var name = GenerateUniqueName(localName);
         var child = canvasElement.AddChild(localName);
         child.Name = name;
@@ -351,6 +378,7 @@ public sealed partial class MainWindow : Window
 
         ApplyDefaultAttributes(child, localName);
 
+        CommitUndoableChange();
         RefreshDesignSurfaceFromDocument();
         SelectByName(name);
     }
@@ -446,6 +474,7 @@ public sealed partial class MainWindow : Window
             {
                 Select(hitElement, designElement);
 
+                BeginUndoableChange();
                 _moveElement = hitElement;
                 _moveDesignElement = designElement;
                 _moveStartPointerPosition = localPoint;
@@ -484,6 +513,7 @@ public sealed partial class MainWindow : Window
         {
             _moveDesignElement.SetAttribute("Canvas.Left", FormatLength(GetCanvasLeft(_moveElement)));
             _moveDesignElement.SetAttribute("Canvas.Top", FormatLength(GetCanvasTop(_moveElement)));
+            CommitUndoableChange();
             RefreshXamlSourceView();
         }
 
@@ -498,6 +528,8 @@ public sealed partial class MainWindow : Window
         {
             return;
         }
+
+        BeginUndoableChange();
 
         var handle = (FrameworkElement)sender;
         _resizeDirection = (string)handle.Tag;
@@ -543,6 +575,7 @@ public sealed partial class MainWindow : Window
             _resizeDesignElement.SetAttribute("Canvas.Top", FormatLength(GetCanvasTop(resizing)));
             _resizeDesignElement.SetAttribute("Width", FormatLength(resizing.Width));
             _resizeDesignElement.SetAttribute("Height", FormatLength(resizing.Height));
+            CommitUndoableChange();
             RefreshXamlSourceView();
         }
 
@@ -630,10 +663,15 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private void RootGrid_KeyDown(object sender, KeyRoutedEventArgs e)
     {
+        // Also guards Ctrl+Z/Y here, not just Escape/Delete - a TextBox has its own built-in
+        // undo for text edits, and intercepting Ctrl+Z at the window level while typing in a
+        // property field would fight with that instead of undoing the field's own typing.
         if (FocusManager.GetFocusedElement(Content.XamlRoot) is TextBox)
         {
             return;
         }
+
+        var ctrlDown = InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Control).HasFlag(CoreVirtualKeyStates.Down);
 
         switch (e.Key)
         {
@@ -646,6 +684,16 @@ public sealed partial class MainWindow : Window
                 DeleteSelectedControl();
                 e.Handled = true;
                 break;
+
+            case VirtualKey.Z when ctrlDown:
+                Undo();
+                e.Handled = true;
+                break;
+
+            case VirtualKey.Y when ctrlDown:
+                Redo();
+                e.Handled = true;
+                break;
         }
     }
 
@@ -656,7 +704,9 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        BeginUndoableChange();
         _selectedDesignElement.Remove();
+        CommitUndoableChange();
         RefreshDesignSurfaceFromDocument();
     }
 
@@ -807,6 +857,7 @@ public sealed partial class MainWindow : Window
                 break;
         }
 
+        BeginUndoableChange();
         propertyInfo.SetValue(_selectedLiveElement, liveValue);
 
         // The identity property is x:Name, not a plain "Name" attribute - DesignElement.Name
@@ -826,6 +877,7 @@ public sealed partial class MainWindow : Window
             designElement.SetAttribute(descriptor.Name, attributeText.Length == 0 ? null : attributeText);
         }
 
+        CommitUndoableChange();
         RefreshXamlSourceView();
         UpdateAdornerToMatch(_selectedLiveElement);
     }
@@ -900,6 +952,58 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    /// <summary>Call right before a mutation starts. Paired with <see cref="CommitUndoableChange"/>.</summary>
+    private void BeginUndoableChange()
+    {
+        if (_currentDocument is not null)
+        {
+            _pendingUndoSnapshot = _currentDocument.ToXamlString();
+        }
+    }
+
+    /// <summary>
+    /// Call right after a mutation succeeds - pushes the pre-mutation snapshot captured by
+    /// <see cref="BeginUndoableChange"/> onto the undo stack and clears redo (a fresh edit
+    /// invalidates whatever redo history existed). Does nothing if Begin wasn't called first,
+    /// so a validated-and-rejected edit (e.g. unparsable property input) never adds a no-op
+    /// undo step.
+    /// </summary>
+    private void CommitUndoableChange()
+    {
+        if (_pendingUndoSnapshot is null)
+        {
+            return;
+        }
+
+        _undoStack.Push(_pendingUndoSnapshot);
+        _redoStack.Clear();
+        _pendingUndoSnapshot = null;
+    }
+
+    private void Undo()
+    {
+        if (_undoStack.Count == 0 || _currentDocument is null)
+        {
+            return;
+        }
+
+        _redoStack.Push(_currentDocument.ToXamlString());
+        _currentDocument = XamlDocument.Parse(_undoStack.Pop());
+        RefreshDesignSurfaceFromDocument();
+    }
+
+    private void Redo()
+    {
+        if (_redoStack.Count == 0 || _currentDocument is null)
+        {
+            return;
+        }
+
+        _undoStack.Push(_currentDocument.ToXamlString());
+        _currentDocument = XamlDocument.Parse(_redoStack.Pop());
+        RefreshDesignSurfaceFromDocument();
+    }
+
     /// <summary>
     /// Setting TextBox.Text from code doesn't move the caret/scroll position, so a change that
     /// lands outside the currently-scrolled-into-view area (e.g. a newly added element, which
@@ -911,11 +1015,22 @@ public sealed partial class MainWindow : Window
         XamlSourceView.Text = text;
         XamlSourceView.SelectionStart = text.Length;
         XamlSourceView.SelectionLength = 0;
+        UpdateSaveButtonState();
+    }
+
+    /// <summary>Enabled only when the in-memory document differs from what's actually on disk (compared against the text as of the last load/save).</summary>
+    private void UpdateSaveButtonState()
+    {
+        SaveButton.IsEnabled = _currentDocument is not null && _currentDocument.ToXamlString() != _lastSavedXaml;
     }
 
     /// <summary>Drag-resizes a column by attaching pointer handlers directly to a splitter element - there's no built-in GridSplitter in the WinUI SDK.</summary>
-    private void AttachColumnSplitter(UIElement splitter, ColumnDefinition column, double minWidth, double maxWidth, Action onDragCompleted)
+    private void AttachColumnSplitter(FrameworkElement splitter, ColumnDefinition column, double minWidth, double maxWidth, Action onDragCompleted)
     {
+        // Note: a resize-cursor-on-hover would be nice here (WPF/VS-style) but
+        // UIElement/FrameworkElement.ChangeCursor isn't available on the WindowsAppSDK 2.3.1
+        // we're pinned to (see research/13-splitter-direction-cursor-undo.md) - revisit if the
+        // SDK version is ever bumped.
         var dragging = false;
         var lastX = 0.0;
 
@@ -957,11 +1072,18 @@ public sealed partial class MainWindow : Window
         splitter.PointerCaptureLost += EndDrag;
     }
 
-    /// <summary>Same as <see cref="AttachColumnSplitter"/> but for a row's height instead of a column's width.</summary>
-    private void AttachRowSplitter(UIElement splitter, RowDefinition row, double minHeight, double maxHeight, Action onDragCompleted)
+    /// <summary>
+    /// Same as <see cref="AttachColumnSplitter"/> but for a row's height instead of a column's
+    /// width. <paramref name="invert"/> flips the drag direction for splitters whose controlled
+    /// row comes *before* (above) the splitter in the pointer-delta math but is visually the one
+    /// below it in layout terms - see research/13-splitter-direction-cursor-undo.md for why this
+    /// is needed for the design-surface/XAML-source splitter specifically but not the others.
+    /// </summary>
+    private void AttachRowSplitter(FrameworkElement splitter, RowDefinition row, double minHeight, double maxHeight, Action onDragCompleted, bool invert = false)
     {
         var dragging = false;
         var lastY = 0.0;
+        var sign = invert ? -1.0 : 1.0;
 
         splitter.PointerPressed += (_, e) =>
         {
@@ -978,7 +1100,7 @@ public sealed partial class MainWindow : Window
             }
 
             var y = e.GetCurrentPoint(Content).Position.Y;
-            row.Height = new GridLength(Math.Clamp(row.Height.Value + (y - lastY), minHeight, maxHeight));
+            row.Height = new GridLength(Math.Clamp(row.Height.Value + sign * (y - lastY), minHeight, maxHeight));
             lastY = y;
         };
 
