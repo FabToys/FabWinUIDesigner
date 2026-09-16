@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml.Media.Imaging;
 using System.Globalization;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text;
+using System.Text.Json;
 using Windows.Foundation;
 using Windows.Graphics.Imaging;
 using Windows.Storage;
@@ -21,6 +22,8 @@ public sealed partial class MainWindow : Window
 {
     private static readonly string SpikeLogPath = Path.Combine(Path.GetTempPath(), "WinUIDesigner", "m2-xamlreader-spike.log");
     private static readonly string SnapshotPath = Path.Combine(Path.GetTempPath(), "WinUIDesigner", "preview-snapshot.png");
+    private static readonly string LayoutConfigPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WinUIDesigner", "layout.json");
 
     private const double MinElementSize = 8;
     private const double HandleSize = 7;
@@ -53,6 +56,12 @@ public sealed partial class MainWindow : Window
     {
         InitializeComponent();
         Title = "WinUI Designer";
+
+        LoadPanelLayout();
+        AttachColumnSplitter(ToolboxSplitter, ToolboxColumn, minWidth: 100, maxWidth: 400, SavePanelLayout);
+        AttachRowSplitter(DesignXamlSplitter, XamlSourceRow, minHeight: 80, maxHeight: 600, SavePanelLayout);
+        AttachRowSplitter(FilePropertiesSplitter, FilePanelRow, minHeight: 80, maxHeight: 600, SavePanelLayout);
+        Closed += (_, _) => SavePanelLayout();
 
         // Interactive controls (Button, CheckBox, ...) mark PointerPressed/Moved/Released as
         // handled once they start tracking their own press state, so they never bubble to a
@@ -134,20 +143,20 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void FileTreeView_ItemInvoked(TreeView sender, TreeViewItemInvokedEventArgs args)
+    /// <summary>Single click just selects and shows the full path; double-click (below) loads it.</summary>
+    private void FileTreeView_SelectionChanged(TreeView sender, TreeViewSelectionChangedEventArgs args)
     {
-        if (args.InvokedItem is not FileTreeNodeInfo info)
-        {
-            return;
-        }
-
-        if (info.IsXaml)
-        {
-            LoadFile(info.FullPath);
-        }
-        else
+        if (FileTreeView.SelectedItem is FileTreeNodeInfo info)
         {
             CurrentFileText.Text = info.FullPath;
+        }
+    }
+
+    private void FileTreeView_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    {
+        if (FileTreeView.SelectedItem is FileTreeNodeInfo { IsXaml: true } info)
+        {
+            LoadFile(info.FullPath);
         }
     }
 
@@ -839,6 +848,121 @@ public sealed partial class MainWindow : Window
         if (_currentDocument is not null)
         {
             XamlSourceView.Text = _currentDocument.ToXamlString();
+        }
+    }
+
+    /// <summary>Drag-resizes a column by attaching pointer handlers directly to a splitter element - there's no built-in GridSplitter in the WinUI SDK.</summary>
+    private void AttachColumnSplitter(UIElement splitter, ColumnDefinition column, double minWidth, double maxWidth, Action onDragCompleted)
+    {
+        var dragging = false;
+        var lastX = 0.0;
+
+        splitter.PointerPressed += (_, e) =>
+        {
+            dragging = true;
+            lastX = e.GetCurrentPoint(Content).Position.X;
+            splitter.CapturePointer(e.Pointer);
+            e.Handled = true;
+        };
+        splitter.PointerMoved += (_, e) =>
+        {
+            if (!dragging)
+            {
+                return;
+            }
+
+            var x = e.GetCurrentPoint(Content).Position.X;
+            column.Width = new GridLength(Math.Clamp(column.Width.Value + (x - lastX), minWidth, maxWidth));
+            lastX = x;
+        };
+        splitter.PointerReleased += (_, e) =>
+        {
+            if (!dragging)
+            {
+                return;
+            }
+
+            dragging = false;
+            splitter.ReleasePointerCapture(e.Pointer);
+            onDragCompleted();
+        };
+    }
+
+    /// <summary>Same as <see cref="AttachColumnSplitter"/> but for a row's height instead of a column's width.</summary>
+    private void AttachRowSplitter(UIElement splitter, RowDefinition row, double minHeight, double maxHeight, Action onDragCompleted)
+    {
+        var dragging = false;
+        var lastY = 0.0;
+
+        splitter.PointerPressed += (_, e) =>
+        {
+            dragging = true;
+            lastY = e.GetCurrentPoint(Content).Position.Y;
+            splitter.CapturePointer(e.Pointer);
+            e.Handled = true;
+        };
+        splitter.PointerMoved += (_, e) =>
+        {
+            if (!dragging)
+            {
+                return;
+            }
+
+            var y = e.GetCurrentPoint(Content).Position.Y;
+            row.Height = new GridLength(Math.Clamp(row.Height.Value + (y - lastY), minHeight, maxHeight));
+            lastY = y;
+        };
+        splitter.PointerReleased += (_, e) =>
+        {
+            if (!dragging)
+            {
+                return;
+            }
+
+            dragging = false;
+            splitter.ReleasePointerCapture(e.Pointer);
+            onDragCompleted();
+        };
+    }
+
+    private sealed record PanelLayout(double ToolboxWidth, double FilePanelHeight, double XamlSourceHeight);
+
+    private void LoadPanelLayout()
+    {
+        try
+        {
+            if (!File.Exists(LayoutConfigPath))
+            {
+                return;
+            }
+
+            var layout = JsonSerializer.Deserialize<PanelLayout>(File.ReadAllText(LayoutConfigPath));
+            if (layout is null)
+            {
+                return;
+            }
+
+            ToolboxColumn.Width = new GridLength(layout.ToolboxWidth);
+            FilePanelRow.Height = new GridLength(layout.FilePanelHeight);
+            XamlSourceRow.Height = new GridLength(layout.XamlSourceHeight);
+        }
+        catch (Exception)
+        {
+            // Corrupt/unreadable config - just keep the XAML defaults.
+        }
+    }
+
+    private void SavePanelLayout()
+    {
+        try
+        {
+            var layout = new PanelLayout(ToolboxColumn.Width.Value, FilePanelRow.Height.Value, XamlSourceRow.Height.Value);
+            Directory.CreateDirectory(Path.GetDirectoryName(LayoutConfigPath)!);
+            File.WriteAllText(LayoutConfigPath, JsonSerializer.Serialize(layout));
+        }
+        catch (Exception)
+        {
+            // Best-effort - failing to persist layout isn't fatal.
         }
     }
 

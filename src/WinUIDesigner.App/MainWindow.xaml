@@ -5,7 +5,8 @@
 
     <Grid>
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="160" />
+            <ColumnDefinition x:Name="ToolboxColumn" Width="160" />
+            <ColumnDefinition Width="Auto" />
             <ColumnDefinition Width="*" />
             <ColumnDefinition Width="260" />
         </Grid.ColumnDefinitions>
@@ -25,11 +26,15 @@
             </StackPanel>
         </Border>
 
+        <!-- Draggable splitter: Toolbox <-> Center -->
+        <Border x:Name="ToolboxSplitter" Grid.Column="1" Width="6" Background="#FFE0E0E0" HorizontalAlignment="Stretch" />
+
         <!-- Center: design surface (pasteboard) above, XAML source view below -->
-        <Grid Grid.Column="1">
+        <Grid Grid.Column="2">
             <Grid.RowDefinitions>
-                <RowDefinition Height="2*" />
-                <RowDefinition Height="1*" />
+                <RowDefinition x:Name="DesignSurfaceRow" Height="*" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition x:Name="XamlSourceRow" Height="220" />
             </Grid.RowDefinitions>
 
             <!-- Pasteboard: gray background behind the page, like the WPF/VS designer's design
@@ -90,7 +95,10 @@
                 </ScrollViewer>
             </Border>
 
-            <Grid Grid.Row="1">
+            <!-- Draggable splitter: Design surface <-> XAML source -->
+            <Border x:Name="DesignXamlSplitter" Grid.Row="1" Height="6" Background="#FFE0E0E0" VerticalAlignment="Stretch" />
+
+            <Grid Grid.Row="2">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
@@ -110,22 +118,49 @@
         </Grid>
 
         <!-- Right: file panel + property grid -->
-        <Grid Grid.Column="2">
+        <Grid Grid.Column="3">
             <Grid.RowDefinitions>
+                <RowDefinition x:Name="FilePanelRow" Height="260" />
                 <RowDefinition Height="Auto" />
-                <RowDefinition Height="*" />
+                <RowDefinition x:Name="PropertiesRow" Height="*" />
             </Grid.RowDefinitions>
 
-            <StackPanel Grid.Row="0" Padding="8" Spacing="8" BorderBrush="Gray" BorderThickness="0,0,0,1" MaxHeight="320">
-                <TextBlock Text="File" FontWeight="Bold" />
-                <Button x:Name="OpenFolderButton" Content="Open Folder..." Click="OpenFolderButton_Click" HorizontalAlignment="Stretch" />
-                <Button x:Name="OpenButton" Content="Open File..." Click="OpenButton_Click" HorizontalAlignment="Stretch" />
-                <Button x:Name="SaveButton" Content="Save" Click="SaveButton_Click" HorizontalAlignment="Stretch" IsEnabled="False" />
-                <TreeView x:Name="FileTreeView" MaxHeight="160" ItemInvoked="FileTreeView_ItemInvoked" />
-                <TextBlock x:Name="CurrentFileText" Text="(no file open)" TextWrapping="Wrap" FontSize="11" Foreground="Gray" />
-            </StackPanel>
+            <Grid Grid.Row="0" Padding="8" BorderBrush="Gray" BorderThickness="0,0,0,1">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
 
-            <Grid Grid.Row="1">
+                <TextBlock Grid.Row="0" Text="File" FontWeight="Bold" Margin="0,0,0,6" />
+
+                <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="4" Margin="0,0,0,6">
+                    <Button x:Name="OpenFolderButton" Click="OpenFolderButton_Click" Padding="6,4" ToolTipService.ToolTip="Open Folder...">
+                        <TextBlock Text="&#128193;" FontSize="14" />
+                    </Button>
+                    <Button x:Name="OpenButton" Click="OpenButton_Click" Padding="6,4" ToolTipService.ToolTip="Open File...">
+                        <TextBlock Text="&#128196;" FontSize="14" />
+                    </Button>
+                    <Button x:Name="SaveButton" Click="SaveButton_Click" Padding="6,4" IsEnabled="False" ToolTipService.ToolTip="Save">
+                        <TextBlock Text="&#128190;" FontSize="14" />
+                    </Button>
+                </StackPanel>
+
+                <TreeView
+                    x:Name="FileTreeView"
+                    Grid.Row="2"
+                    SelectionMode="Single"
+                    SelectionChanged="FileTreeView_SelectionChanged"
+                    DoubleTapped="FileTreeView_DoubleTapped" />
+
+                <TextBlock x:Name="CurrentFileText" Grid.Row="3" Text="(no file open)" TextWrapping="Wrap" FontSize="11" Foreground="Gray" Margin="0,6,0,0" />
+            </Grid>
+
+            <!-- Draggable splitter: File panel <-> Properties -->
+            <Border x:Name="FilePropertiesSplitter" Grid.Row="1" Height="6" Background="#FFE0E0E0" VerticalAlignment="Stretch" />
+
+            <Grid Grid.Row="2">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
