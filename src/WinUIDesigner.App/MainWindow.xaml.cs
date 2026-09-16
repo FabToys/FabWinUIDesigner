@@ -141,32 +141,48 @@ public sealed partial class MainWindow : Window
             CurrentFileText.Text = path;
             SaveButton.IsEnabled = true;
 
-            var text = doc.ToXamlString();
-            XamlSourceView.Text = text;
-
-            var (root, status) = RenderPreview(text);
-            DesignSurfaceHost.Child = root ?? new TextBlock
-            {
-                Text = $"Preview failed ({status}). See {SpikeLogPath}",
-                Foreground = new SolidColorBrush(Colors.Red),
-                TextWrapping = TextWrapping.Wrap,
-            };
-
-            _liveToDesign = root is not null
-                ? LiveTreeCorrelator.Correlate(root, doc.Root)
-                : new Dictionary<UIElement, DesignElement>();
-            ClearSelection();
-
-            DispatcherQueue.TryEnqueue(async () =>
-            {
-                DesignSurfaceHost.UpdateLayout();
-                await SaveSnapshotAsync(DesignSurfaceHost, SnapshotPath);
-            });
+            RefreshDesignSurfaceFromDocument();
         }
         catch (Exception ex)
         {
             CurrentFileText.Text = $"Failed to open: {ex.Message}";
         }
+    }
+
+    /// <summary>
+    /// Re-renders the design surface, XAML source pane, and live/design element correlation
+    /// from <see cref="_currentDocument"/>'s current in-memory state - used both after opening
+    /// a file and after any structural edit (e.g. adding a toolbox control), since those need
+    /// a full XamlReader reload rather than an incremental live-object tweak.
+    /// </summary>
+    private void RefreshDesignSurfaceFromDocument()
+    {
+        if (_currentDocument is null)
+        {
+            return;
+        }
+
+        var text = _currentDocument.ToXamlString();
+        XamlSourceView.Text = text;
+
+        var (root, status) = RenderPreview(text);
+        DesignSurfaceHost.Child = root ?? new TextBlock
+        {
+            Text = $"Preview failed ({status}). See {SpikeLogPath}",
+            Foreground = new SolidColorBrush(Colors.Red),
+            TextWrapping = TextWrapping.Wrap,
+        };
+
+        _liveToDesign = root is not null
+            ? LiveTreeCorrelator.Correlate(root, _currentDocument.Root)
+            : new Dictionary<UIElement, DesignElement>();
+        ClearSelection();
+
+        DispatcherQueue.TryEnqueue(async () =>
+        {
+            DesignSurfaceHost.UpdateLayout();
+            await SaveSnapshotAsync(DesignSurfaceHost, SnapshotPath);
+        });
     }
 
     /// <summary>
@@ -211,6 +227,120 @@ public sealed partial class MainWindow : Window
     {
         Directory.CreateDirectory(Path.GetDirectoryName(SpikeLogPath)!);
         File.AppendAllText(SpikeLogPath, contents + Environment.NewLine);
+    }
+
+    private void ToolboxItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: string localName })
+        {
+            AddControl(localName);
+        }
+    }
+
+    /// <summary>
+    /// Adds a new element of the given type (e.g. "Button") as a child of the root Canvas,
+    /// with sensible defaults, then does a full reload and selects it so the user can
+    /// immediately drag it into place. v1 only supports a Canvas root (see
+    /// research/00-scope-and-decisions.md), so this doesn't attempt to target nested containers.
+    /// </summary>
+    private void AddControl(string localName)
+    {
+        if (_currentDocument is null)
+        {
+            return;
+        }
+
+        var canvasElement = _currentDocument.Root.Children.FirstOrDefault();
+        if (canvasElement is null || canvasElement.LocalName != "Canvas")
+        {
+            return;
+        }
+
+        var name = GenerateUniqueName(localName);
+        var child = canvasElement.AddChild(localName);
+        child.Name = name;
+
+        // Cascade new controls slightly so repeated adds don't land exactly on top of each other.
+        var siblingCount = canvasElement.Children.Count();
+        var offset = FormatLength(20 + ((siblingCount - 1) % 8 * 24));
+        child.SetAttribute("Canvas.Left", offset);
+        child.SetAttribute("Canvas.Top", offset);
+
+        ApplyDefaultAttributes(child, localName);
+
+        RefreshDesignSurfaceFromDocument();
+        SelectByName(name);
+    }
+
+    private static void ApplyDefaultAttributes(DesignElement element, string localName)
+    {
+        switch (localName)
+        {
+            case "Button":
+                element.SetAttribute("Content", "Button");
+                element.SetAttribute("Width", "100");
+                element.SetAttribute("Height", "32");
+                break;
+            case "TextBlock":
+                element.SetAttribute("Text", "TextBlock");
+                break;
+            case "TextBox":
+                element.SetAttribute("Width", "120");
+                element.SetAttribute("Height", "32");
+                break;
+            case "CheckBox":
+                element.SetAttribute("Content", "CheckBox");
+                break;
+            case "ComboBox":
+                element.SetAttribute("Width", "120");
+                break;
+            case "Image":
+                element.SetAttribute("Width", "100");
+                element.SetAttribute("Height", "100");
+                break;
+            case "StackPanel":
+            case "Grid":
+                element.SetAttribute("Width", "150");
+                element.SetAttribute("Height", "100");
+                break;
+        }
+    }
+
+    /// <summary>Finds the next unused "{localName}{N}" name by scanning the whole document, so it stays unique even across files that already name things that way.</summary>
+    private string GenerateUniqueName(string localName)
+    {
+        var used = new HashSet<string>();
+        CollectNames(_currentDocument!.Root, used);
+
+        var n = 1;
+        while (used.Contains($"{localName}{n}"))
+        {
+            n++;
+        }
+
+        return $"{localName}{n}";
+    }
+
+    private static void CollectNames(DesignElement element, HashSet<string> names)
+    {
+        if (element.Name is { Length: > 0 } name)
+        {
+            names.Add(name);
+        }
+
+        foreach (var child in element.Children)
+        {
+            CollectNames(child, names);
+        }
+    }
+
+    private void SelectByName(string name)
+    {
+        var entry = _liveToDesign.FirstOrDefault(kvp => kvp.Value.Name == name);
+        if (entry.Key is not null)
+        {
+            Select(entry.Key, entry.Value);
+        }
     }
 
     private void DesignSurfaceHost_PointerPressed(object sender, PointerRoutedEventArgs e)

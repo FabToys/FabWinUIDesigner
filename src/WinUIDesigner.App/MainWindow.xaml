@@ -14,14 +14,14 @@
         <Border Grid.Column="0" BorderBrush="Gray" BorderThickness="0,0,1,0">
             <StackPanel Padding="8" Spacing="4">
                 <TextBlock Text="Toolbox" FontWeight="Bold" Margin="0,0,0,8" />
-                <TextBlock Text="Button" />
-                <TextBlock Text="TextBlock" />
-                <TextBlock Text="TextBox" />
-                <TextBlock Text="CheckBox" />
-                <TextBlock Text="ComboBox" />
-                <TextBlock Text="Image" />
-                <TextBlock Text="StackPanel" />
-                <TextBlock Text="Grid" />
+                <Button Content="Button" Tag="Button" Click="ToolboxItem_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Background="Transparent" BorderThickness="0" Padding="4,6" />
+                <Button Content="TextBlock" Tag="TextBlock" Click="ToolboxItem_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Background="Transparent" BorderThickness="0" Padding="4,6" />
+                <Button Content="TextBox" Tag="TextBox" Click="ToolboxItem_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Background="Transparent" BorderThickness="0" Padding="4,6" />
+                <Button Content="CheckBox" Tag="CheckBox" Click="ToolboxItem_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Background="Transparent" BorderThickness="0" Padding="4,6" />
+                <Button Content="ComboBox" Tag="ComboBox" Click="ToolboxItem_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Background="Transparent" BorderThickness="0" Padding="4,6" />
+                <Button Content="Image" Tag="Image" Click="ToolboxItem_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Background="Transparent" BorderThickness="0" Padding="4,6" />
+                <Button Content="StackPanel" Tag="StackPanel" Click="ToolboxItem_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Background="Transparent" BorderThickness="0" Padding="4,6" />
+                <Button Content="Grid" Tag="Grid" Click="ToolboxItem_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Background="Transparent" BorderThickness="0" Padding="4,6" />
             </StackPanel>
         </Border>
 
