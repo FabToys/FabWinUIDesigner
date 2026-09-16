@@ -121,15 +121,18 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// M2 spike: tries loading the raw document text via XamlReader.Load, then progressively
-    /// sanitized versions, logging what succeeds/fails and why at each step. See
-    /// research/02-xamlreader-event-handlers.md for the write-up of these findings.
+    /// Loads a design-time preview of the document. The M2 spike (see
+    /// research/02-xamlreader-event-handlers.md) confirmed loose XamlReader.Load
+    /// deterministically throws on x:Class, so we skip straight to stripping it instead of
+    /// trying the raw text first - trying it anyway would throw every single time (visible as
+    /// a first-chance XamlParseException that trips debugger breakpoints on thrown exceptions,
+    /// even though it's caught) for no benefit. The second, more aggressive fallback is kept
+    /// defensively for control types/attributes we haven't fixture-tested.
     /// </summary>
     private static (UIElement? root, string status) RenderPreview(string xamlText)
     {
         var attempts = new (string Label, string Xaml)[]
         {
-            ("raw (unmodified)", xamlText),
             ("x:Class stripped", XamlPreviewSanitizer.StripClass(xamlText)),
             ("x:Class + events stripped", XamlPreviewSanitizer.StripClassAndEvents(xamlText)),
         };
