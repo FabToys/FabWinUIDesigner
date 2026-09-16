@@ -123,10 +123,21 @@
                 <TextBlock x:Name="CurrentFileText" Text="(no file open)" TextWrapping="Wrap" />
             </StackPanel>
 
-            <StackPanel Grid.Row="1" Padding="8" Spacing="4">
-                <TextBlock Text="Properties" FontWeight="Bold" />
-                <TextBlock x:Name="SelectionSummaryText" Text="(no selection)" Foreground="Gray" />
-            </StackPanel>
+            <Grid Grid.Row="1">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <StackPanel Grid.Row="0" Padding="8" Spacing="4">
+                    <TextBlock Text="Properties" FontWeight="Bold" />
+                    <TextBlock x:Name="SelectionSummaryText" Text="(no selection)" Foreground="Gray" />
+                </StackPanel>
+
+                <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                    <StackPanel x:Name="PropertyGridPanel" Padding="8,0,8,8" Spacing="6" />
+                </ScrollViewer>
+            </Grid>
         </Grid>
     </Grid>
 </Window>

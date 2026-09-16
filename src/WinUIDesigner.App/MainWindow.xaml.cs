@@ -526,6 +526,7 @@ public sealed partial class MainWindow : Window
         SelectionSummaryText.Text = label;
 
         UpdateAdornerToMatch(liveElement);
+        BuildPropertyGrid(designElement);
     }
 
     private void ClearSelection()
@@ -536,6 +537,153 @@ public sealed partial class MainWindow : Window
         SelectionLabel.Visibility = Visibility.Collapsed;
         SetHandlesVisibility(Visibility.Collapsed);
         SelectionSummaryText.Text = "(no selection)";
+        PropertyGridPanel.Children.Clear();
+    }
+
+    private void BuildPropertyGrid(DesignElement designElement)
+    {
+        PropertyGridPanel.Children.Clear();
+
+        foreach (var descriptor in PropertyGridSchema.GetProperties(designElement.LocalName))
+        {
+            var row = new StackPanel { Spacing = 2 };
+            row.Children.Add(new TextBlock { Text = descriptor.Name, FontSize = 11, Foreground = new SolidColorBrush(Colors.Gray) });
+            row.Children.Add(CreatePropertyEditor(designElement, descriptor));
+            PropertyGridPanel.Children.Add(row);
+        }
+    }
+
+    private FrameworkElement CreatePropertyEditor(DesignElement designElement, PropertyDescriptor descriptor)
+    {
+        var currentText = designElement.GetAttribute(descriptor.Name) ?? string.Empty;
+
+        switch (descriptor.Kind)
+        {
+            case PropertyEditorKind.Bool:
+            {
+                var checkBox = new CheckBox { IsChecked = string.Equals(currentText, "True", StringComparison.OrdinalIgnoreCase) };
+                checkBox.Checked += (_, _) => ApplyPropertyEdit(designElement, descriptor, "True");
+                checkBox.Unchecked += (_, _) => ApplyPropertyEdit(designElement, descriptor, "False");
+                return checkBox;
+            }
+
+            case PropertyEditorKind.Enum:
+            {
+                var values = descriptor.EnumValues ?? [];
+                var combo = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch, ItemsSource = values };
+                combo.SelectedItem = values.FirstOrDefault(v => string.Equals(v, currentText, StringComparison.OrdinalIgnoreCase)) ?? values.FirstOrDefault();
+                combo.SelectionChanged += (_, _) =>
+                {
+                    if (combo.SelectedItem is string selected)
+                    {
+                        ApplyPropertyEdit(designElement, descriptor, selected);
+                    }
+                };
+                return combo;
+            }
+
+            default:
+            {
+                var textBox = new TextBox { Text = currentText };
+                textBox.LostFocus += (_, _) => ApplyPropertyEdit(designElement, descriptor, textBox.Text);
+                return textBox;
+            }
+        }
+    }
+
+    private void ApplyPropertyEdit(DesignElement designElement, PropertyDescriptor descriptor, string rawText)
+    {
+        if (_selectedLiveElement is null)
+        {
+            return;
+        }
+
+        var propertyInfo = _selectedLiveElement.GetType().GetProperty(descriptor.Name);
+        if (propertyInfo is null || !propertyInfo.CanWrite)
+        {
+            return;
+        }
+
+        object? liveValue;
+        string attributeText;
+
+        switch (descriptor.Kind)
+        {
+            case PropertyEditorKind.Number:
+                if (rawText.Trim().Length == 0)
+                {
+                    liveValue = double.NaN;
+                    attributeText = string.Empty;
+                }
+                else if (double.TryParse(rawText, NumberStyles.Float, CultureInfo.InvariantCulture, out var number))
+                {
+                    liveValue = number;
+                    attributeText = FormatLength(number);
+                }
+                else
+                {
+                    return; // invalid input - leave the field as typed, don't apply
+                }
+
+                break;
+
+            case PropertyEditorKind.Bool:
+                liveValue = string.Equals(rawText, "True", StringComparison.OrdinalIgnoreCase);
+                attributeText = rawText;
+                break;
+
+            case PropertyEditorKind.Enum:
+                liveValue = Enum.Parse(propertyInfo.PropertyType, rawText);
+                attributeText = rawText;
+                break;
+
+            case PropertyEditorKind.Brush:
+                if (!PropertyValueConverter.TryParseColor(rawText, out var color))
+                {
+                    return;
+                }
+
+                liveValue = new SolidColorBrush(color);
+                attributeText = rawText;
+                break;
+
+            case PropertyEditorKind.Thickness:
+                if (!PropertyValueConverter.TryParseThickness(rawText, out var thickness))
+                {
+                    return;
+                }
+
+                liveValue = thickness;
+                attributeText = rawText.Trim().Length == 0 ? string.Empty : PropertyValueConverter.FormatThickness(thickness);
+                break;
+
+            default: // Text
+                liveValue = rawText;
+                attributeText = rawText;
+                break;
+        }
+
+        propertyInfo.SetValue(_selectedLiveElement, liveValue);
+
+        // The identity property is x:Name, not a plain "Name" attribute - DesignElement.Name
+        // is what every other part of the tool (toolbox naming, selection lookup) reads and
+        // writes, so routing it through the generic SetAttribute(string) path here would create
+        // a stray plain Name="..." attribute alongside the untouched x:Name instead of renaming it.
+        if (descriptor.Name == "Name")
+        {
+            designElement.Name = attributeText.Length == 0 ? null : attributeText;
+
+            var label = designElement.Name is { Length: > 0 } name ? $"{designElement.LocalName} ({name})" : designElement.LocalName;
+            SelectionLabelText.Text = label;
+            SelectionSummaryText.Text = label;
+        }
+        else
+        {
+            designElement.SetAttribute(descriptor.Name, attributeText.Length == 0 ? null : attributeText);
+        }
+
+        RefreshXamlSourceView();
+        UpdateAdornerToMatch(_selectedLiveElement);
     }
 
     private void SetHandlesVisibility(Visibility visibility)
