@@ -116,11 +116,13 @@
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
-            <StackPanel Grid.Row="0" Padding="8" Spacing="8" BorderBrush="Gray" BorderThickness="0,0,0,1">
+            <StackPanel Grid.Row="0" Padding="8" Spacing="8" BorderBrush="Gray" BorderThickness="0,0,0,1" MaxHeight="320">
                 <TextBlock Text="File" FontWeight="Bold" />
-                <Button x:Name="OpenButton" Content="Open..." Click="OpenButton_Click" HorizontalAlignment="Stretch" />
+                <Button x:Name="OpenFolderButton" Content="Open Folder..." Click="OpenFolderButton_Click" HorizontalAlignment="Stretch" />
+                <Button x:Name="OpenButton" Content="Open File..." Click="OpenButton_Click" HorizontalAlignment="Stretch" />
                 <Button x:Name="SaveButton" Content="Save" Click="SaveButton_Click" HorizontalAlignment="Stretch" IsEnabled="False" />
-                <TextBlock x:Name="CurrentFileText" Text="(no file open)" TextWrapping="Wrap" />
+                <TreeView x:Name="FileTreeView" MaxHeight="160" ItemInvoked="FileTreeView_ItemInvoked" />
+                <TextBlock x:Name="CurrentFileText" Text="(no file open)" TextWrapping="Wrap" FontSize="11" Foreground="Gray" />
             </StackPanel>
 
             <Grid Grid.Row="1">

@@ -94,6 +94,68 @@ public sealed partial class MainWindow : Window
         _currentDocument.Save(_currentFilePath);
     }
 
+    private async void OpenFolderButton_Click(object sender, RoutedEventArgs e)
+    {
+        var picker = new FolderPicker();
+        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
+        picker.FileTypeFilter.Add("*");
+
+        var folder = await picker.PickSingleFolderAsync();
+        if (folder is not null)
+        {
+            PopulateFileTree(folder.Path);
+        }
+    }
+
+    /// <summary>
+    /// Non-recursive: lists .xaml files directly in the chosen folder (name + extension only,
+    /// not the full path - that's shown for whichever item is selected instead). Each .xaml
+    /// node gets its paired .xaml.cs nested under it if one exists on disk, like VS's Solution
+    /// Explorer file nesting - there's no code editor yet (that's later, around M7/M8), so
+    /// selecting the .cs node just shows its path rather than opening it.
+    /// </summary>
+    private void PopulateFileTree(string folderPath)
+    {
+        FileTreeView.RootNodes.Clear();
+
+        foreach (var xamlPath in Directory.EnumerateFiles(folderPath, "*.xaml").OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
+        {
+            var node = new TreeViewNode { Content = new FileTreeNodeInfo(Path.GetFileName(xamlPath), xamlPath, IsXaml: true) };
+
+            var codeBehindPath = xamlPath + ".cs";
+            if (File.Exists(codeBehindPath))
+            {
+                node.Children.Add(new TreeViewNode { Content = new FileTreeNodeInfo(Path.GetFileName(codeBehindPath), codeBehindPath, IsXaml: false) });
+                node.IsExpanded = true;
+            }
+
+            FileTreeView.RootNodes.Add(node);
+        }
+    }
+
+    private void FileTreeView_ItemInvoked(TreeView sender, TreeViewItemInvokedEventArgs args)
+    {
+        if (args.InvokedItem is not FileTreeNodeInfo info)
+        {
+            return;
+        }
+
+        if (info.IsXaml)
+        {
+            LoadFile(info.FullPath);
+        }
+        else
+        {
+            CurrentFileText.Text = info.FullPath;
+        }
+    }
+
+    private sealed record FileTreeNodeInfo(string DisplayName, string FullPath, bool IsXaml)
+    {
+        public override string ToString() => DisplayName;
+    }
+
     private void AutoLoadFirstSample()
     {
         var samplesDir = FindSamplesDirectory();
@@ -540,17 +602,41 @@ public sealed partial class MainWindow : Window
         PropertyGridPanel.Children.Clear();
     }
 
+    /// <summary>Two-column name/value layout, matching the WPF/WinForms Properties window.</summary>
     private void BuildPropertyGrid(DesignElement designElement)
     {
         PropertyGridPanel.Children.Clear();
 
-        foreach (var descriptor in PropertyGridSchema.GetProperties(designElement.LocalName))
+        var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(90) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        var descriptors = PropertyGridSchema.GetProperties(designElement.LocalName);
+        for (var row = 0; row < descriptors.Count; row++)
         {
-            var row = new StackPanel { Spacing = 2 };
-            row.Children.Add(new TextBlock { Text = descriptor.Name, FontSize = 11, Foreground = new SolidColorBrush(Colors.Gray) });
-            row.Children.Add(CreatePropertyEditor(designElement, descriptor));
-            PropertyGridPanel.Children.Add(row);
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+            var descriptor = descriptors[row];
+
+            var label = new TextBlock
+            {
+                Text = descriptor.Name,
+                FontSize = 12,
+                Margin = new Thickness(0, 0, 6, 6),
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            Grid.SetRow(label, row);
+            Grid.SetColumn(label, 0);
+            grid.Children.Add(label);
+
+            var editor = CreatePropertyEditor(designElement, descriptor);
+            editor.Margin = new Thickness(0, 0, 0, 6);
+            Grid.SetRow(editor, row);
+            Grid.SetColumn(editor, 1);
+            grid.Children.Add(editor);
         }
+
+        PropertyGridPanel.Children.Add(grid);
     }
 
     private FrameworkElement CreatePropertyEditor(DesignElement designElement, PropertyDescriptor descriptor)
