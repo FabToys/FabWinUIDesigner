@@ -12,6 +12,7 @@ using Windows.Foundation;
 using Windows.Graphics.Imaging;
 using Windows.Storage;
 using Windows.Storage.Pickers;
+using Windows.System;
 using WinUIDesigner.Core;
 using DesignElement = WinUIDesigner.Document.DesignElement;
 using XamlDocument = WinUIDesigner.Document.XamlDocument;
@@ -75,6 +76,11 @@ public sealed partial class MainWindow : Window
         DesignSurfaceHost.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(DesignSurfaceHost_PointerPressed), true);
         DesignSurfaceHost.AddHandler(UIElement.PointerMovedEvent, new PointerEventHandler(DesignSurfaceHost_PointerMoved), true);
         DesignSurfaceHost.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(DesignSurfaceHost_PointerReleased), true);
+        // PointerCaptureLost can fire instead of PointerReleased (e.g. the pointer leaves the
+        // window mid-drag) - without also resetting state here, a drag could get "stuck" and
+        // silently keep applying stale deltas to unrelated future pointer movement. Reusing the
+        // same handler is safe: it already guards on _moveElement being non-null.
+        DesignSurfaceHost.AddHandler(UIElement.PointerCaptureLostEvent, new PointerEventHandler(DesignSurfaceHost_PointerReleased), true);
 
         AutoLoadFirstSample();
     }
@@ -143,10 +149,16 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    /// <summary>Single click just selects and shows the full path; double-click (below) loads it.</summary>
+    /// <summary>
+    /// Single click just selects and shows the full path; double-click (below) loads it.
+    /// Uses SelectedNode.Content, not SelectedItem - SelectedItem only reflects the selection
+    /// for an ItemsSource-bound TreeView; ours is populated manually via RootNodes/TreeViewNode,
+    /// so SelectedNode is the API that actually tracks selection in that mode. (Bug found via
+    /// real testing: double-click silently did nothing because of this.)
+    /// </summary>
     private void FileTreeView_SelectionChanged(TreeView sender, TreeViewSelectionChangedEventArgs args)
     {
-        if (FileTreeView.SelectedItem is FileTreeNodeInfo info)
+        if (FileTreeView.SelectedNode?.Content is FileTreeNodeInfo info)
         {
             CurrentFileText.Text = info.FullPath;
         }
@@ -154,7 +166,7 @@ public sealed partial class MainWindow : Window
 
     private void FileTreeView_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
     {
-        if (FileTreeView.SelectedItem is FileTreeNodeInfo { IsXaml: true } info)
+        if (FileTreeView.SelectedNode?.Content is FileTreeNodeInfo { IsXaml: true } info)
         {
             LoadFile(info.FullPath);
         }
@@ -234,7 +246,7 @@ public sealed partial class MainWindow : Window
         }
 
         var text = _currentDocument.ToXamlString();
-        XamlSourceView.Text = text;
+        SetXamlSourceText(text);
 
         var (root, status) = RenderPreview(text);
         DesignSurfaceHost.Child = root ?? new TextBlock
@@ -611,6 +623,43 @@ public sealed partial class MainWindow : Window
         PropertyGridPanel.Children.Clear();
     }
 
+    /// <summary>
+    /// Escape deselects ("cancel"); Delete removes the selected control. Guarded against a
+    /// TextBox having focus (e.g. editing a property value) so Delete there edits text as
+    /// expected instead of deleting the whole control.
+    /// </summary>
+    private void RootGrid_KeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (FocusManager.GetFocusedElement(Content.XamlRoot) is TextBox)
+        {
+            return;
+        }
+
+        switch (e.Key)
+        {
+            case VirtualKey.Escape:
+                ClearSelection();
+                e.Handled = true;
+                break;
+
+            case VirtualKey.Delete:
+                DeleteSelectedControl();
+                e.Handled = true;
+                break;
+        }
+    }
+
+    private void DeleteSelectedControl()
+    {
+        if (_selectedDesignElement is null)
+        {
+            return;
+        }
+
+        _selectedDesignElement.Remove();
+        RefreshDesignSurfaceFromDocument();
+    }
+
     /// <summary>Two-column name/value layout, matching the WPF/WinForms Properties window.</summary>
     private void BuildPropertyGrid(DesignElement designElement)
     {
@@ -847,8 +896,21 @@ public sealed partial class MainWindow : Window
     {
         if (_currentDocument is not null)
         {
-            XamlSourceView.Text = _currentDocument.ToXamlString();
+            SetXamlSourceText(_currentDocument.ToXamlString());
         }
+    }
+
+    /// <summary>
+    /// Setting TextBox.Text from code doesn't move the caret/scroll position, so a change that
+    /// lands outside the currently-scrolled-into-view area (e.g. a newly added element, which
+    /// is appended near the end) can look like "nothing happened" even though the text really
+    /// did update. Moving the caret to the end scrolls it into view.
+    /// </summary>
+    private void SetXamlSourceText(string text)
+    {
+        XamlSourceView.Text = text;
+        XamlSourceView.SelectionStart = text.Length;
+        XamlSourceView.SelectionLength = 0;
     }
 
     /// <summary>Drag-resizes a column by attaching pointer handlers directly to a splitter element - there's no built-in GridSplitter in the WinUI SDK.</summary>
@@ -875,7 +937,11 @@ public sealed partial class MainWindow : Window
             column.Width = new GridLength(Math.Clamp(column.Width.Value + (x - lastX), minWidth, maxWidth));
             lastX = x;
         };
-        splitter.PointerReleased += (_, e) =>
+
+        // PointerCaptureLost can fire instead of PointerReleased (pointer leaves the window,
+        // etc.) - without also resetting `dragging` here, a drag can get stuck "on" and keep
+        // reacting to unrelated future pointer movement near the splitter.
+        void EndDrag(object? s, PointerRoutedEventArgs e)
         {
             if (!dragging)
             {
@@ -885,7 +951,10 @@ public sealed partial class MainWindow : Window
             dragging = false;
             splitter.ReleasePointerCapture(e.Pointer);
             onDragCompleted();
-        };
+        }
+
+        splitter.PointerReleased += EndDrag;
+        splitter.PointerCaptureLost += EndDrag;
     }
 
     /// <summary>Same as <see cref="AttachColumnSplitter"/> but for a row's height instead of a column's width.</summary>
@@ -912,7 +981,8 @@ public sealed partial class MainWindow : Window
             row.Height = new GridLength(Math.Clamp(row.Height.Value + (y - lastY), minHeight, maxHeight));
             lastY = y;
         };
-        splitter.PointerReleased += (_, e) =>
+
+        void EndDrag(object? s, PointerRoutedEventArgs e)
         {
             if (!dragging)
             {
@@ -922,7 +992,10 @@ public sealed partial class MainWindow : Window
             dragging = false;
             splitter.ReleasePointerCapture(e.Pointer);
             onDragCompleted();
-        };
+        }
+
+        splitter.PointerReleased += EndDrag;
+        splitter.PointerCaptureLost += EndDrag;
     }
 
     private sealed record PanelLayout(double ToolboxWidth, double FilePanelHeight, double XamlSourceHeight);

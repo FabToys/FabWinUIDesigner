@@ -3,7 +3,7 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
-    <Grid>
+    <Grid x:Name="RootGrid" KeyDown="RootGrid_KeyDown">
         <Grid.ColumnDefinitions>
             <ColumnDefinition x:Name="ToolboxColumn" Width="160" />
             <ColumnDefinition Width="Auto" />
@@ -27,7 +27,7 @@
         </Border>
 
         <!-- Draggable splitter: Toolbox <-> Center -->
-        <Border x:Name="ToolboxSplitter" Grid.Column="1" Width="6" Background="#FFE0E0E0" HorizontalAlignment="Stretch" />
+        <Border x:Name="ToolboxSplitter" Grid.Column="1" Width="8" Background="#FFE0E0E0" HorizontalAlignment="Stretch" />
 
         <!-- Center: design surface (pasteboard) above, XAML source view below -->
         <Grid Grid.Column="2">
@@ -82,21 +82,21 @@
                             </Border>
 
                             <!-- Resize handles: 4 corners + 4 edge midpoints, VS-style small squares. -->
-                            <Rectangle x:Name="HandleNW" Tag="NW" Visibility="Collapsed" Width="7" Height="7" Fill="White" Stroke="#FF5B7C99" StrokeThickness="1" PointerPressed="ResizeHandle_PointerPressed" PointerMoved="ResizeHandle_PointerMoved" PointerReleased="ResizeHandle_PointerReleased" />
-                            <Rectangle x:Name="HandleN" Tag="N" Visibility="Collapsed" Width="7" Height="7" Fill="White" Stroke="#FF5B7C99" StrokeThickness="1" PointerPressed="ResizeHandle_PointerPressed" PointerMoved="ResizeHandle_PointerMoved" PointerReleased="ResizeHandle_PointerReleased" />
-                            <Rectangle x:Name="HandleNE" Tag="NE" Visibility="Collapsed" Width="7" Height="7" Fill="White" Stroke="#FF5B7C99" StrokeThickness="1" PointerPressed="ResizeHandle_PointerPressed" PointerMoved="ResizeHandle_PointerMoved" PointerReleased="ResizeHandle_PointerReleased" />
-                            <Rectangle x:Name="HandleW" Tag="W" Visibility="Collapsed" Width="7" Height="7" Fill="White" Stroke="#FF5B7C99" StrokeThickness="1" PointerPressed="ResizeHandle_PointerPressed" PointerMoved="ResizeHandle_PointerMoved" PointerReleased="ResizeHandle_PointerReleased" />
-                            <Rectangle x:Name="HandleE" Tag="E" Visibility="Collapsed" Width="7" Height="7" Fill="White" Stroke="#FF5B7C99" StrokeThickness="1" PointerPressed="ResizeHandle_PointerPressed" PointerMoved="ResizeHandle_PointerMoved" PointerReleased="ResizeHandle_PointerReleased" />
-                            <Rectangle x:Name="HandleSW" Tag="SW" Visibility="Collapsed" Width="7" Height="7" Fill="White" Stroke="#FF5B7C99" StrokeThickness="1" PointerPressed="ResizeHandle_PointerPressed" PointerMoved="ResizeHandle_PointerMoved" PointerReleased="ResizeHandle_PointerReleased" />
-                            <Rectangle x:Name="HandleS" Tag="S" Visibility="Collapsed" Width="7" Height="7" Fill="White" Stroke="#FF5B7C99" StrokeThickness="1" PointerPressed="ResizeHandle_PointerPressed" PointerMoved="ResizeHandle_PointerMoved" PointerReleased="ResizeHandle_PointerReleased" />
-                            <Rectangle x:Name="HandleSE" Tag="SE" Visibility="Collapsed" Width="7" Height="7" Fill="White" Stroke="#FF5B7C99" StrokeThickness="1" PointerPressed="ResizeHandle_PointerPressed" PointerMoved="ResizeHandle_PointerMoved" PointerReleased="ResizeHandle_PointerReleased" />
+                            <Rectangle x:Name="HandleNW" Tag="NW" Visibility="Collapsed" Width="7" Height="7" Fill="White" Stroke="#FF5B7C99" StrokeThickness="1" PointerPressed="ResizeHandle_PointerPressed" PointerMoved="ResizeHandle_PointerMoved" PointerReleased="ResizeHandle_PointerReleased" PointerCaptureLost="ResizeHandle_PointerReleased" />
+                            <Rectangle x:Name="HandleN" Tag="N" Visibility="Collapsed" Width="7" Height="7" Fill="White" Stroke="#FF5B7C99" StrokeThickness="1" PointerPressed="ResizeHandle_PointerPressed" PointerMoved="ResizeHandle_PointerMoved" PointerReleased="ResizeHandle_PointerReleased" PointerCaptureLost="ResizeHandle_PointerReleased" />
+                            <Rectangle x:Name="HandleNE" Tag="NE" Visibility="Collapsed" Width="7" Height="7" Fill="White" Stroke="#FF5B7C99" StrokeThickness="1" PointerPressed="ResizeHandle_PointerPressed" PointerMoved="ResizeHandle_PointerMoved" PointerReleased="ResizeHandle_PointerReleased" PointerCaptureLost="ResizeHandle_PointerReleased" />
+                            <Rectangle x:Name="HandleW" Tag="W" Visibility="Collapsed" Width="7" Height="7" Fill="White" Stroke="#FF5B7C99" StrokeThickness="1" PointerPressed="ResizeHandle_PointerPressed" PointerMoved="ResizeHandle_PointerMoved" PointerReleased="ResizeHandle_PointerReleased" PointerCaptureLost="ResizeHandle_PointerReleased" />
+                            <Rectangle x:Name="HandleE" Tag="E" Visibility="Collapsed" Width="7" Height="7" Fill="White" Stroke="#FF5B7C99" StrokeThickness="1" PointerPressed="ResizeHandle_PointerPressed" PointerMoved="ResizeHandle_PointerMoved" PointerReleased="ResizeHandle_PointerReleased" PointerCaptureLost="ResizeHandle_PointerReleased" />
+                            <Rectangle x:Name="HandleSW" Tag="SW" Visibility="Collapsed" Width="7" Height="7" Fill="White" Stroke="#FF5B7C99" StrokeThickness="1" PointerPressed="ResizeHandle_PointerPressed" PointerMoved="ResizeHandle_PointerMoved" PointerReleased="ResizeHandle_PointerReleased" PointerCaptureLost="ResizeHandle_PointerReleased" />
+                            <Rectangle x:Name="HandleS" Tag="S" Visibility="Collapsed" Width="7" Height="7" Fill="White" Stroke="#FF5B7C99" StrokeThickness="1" PointerPressed="ResizeHandle_PointerPressed" PointerMoved="ResizeHandle_PointerMoved" PointerReleased="ResizeHandle_PointerReleased" PointerCaptureLost="ResizeHandle_PointerReleased" />
+                            <Rectangle x:Name="HandleSE" Tag="SE" Visibility="Collapsed" Width="7" Height="7" Fill="White" Stroke="#FF5B7C99" StrokeThickness="1" PointerPressed="ResizeHandle_PointerPressed" PointerMoved="ResizeHandle_PointerMoved" PointerReleased="ResizeHandle_PointerReleased" PointerCaptureLost="ResizeHandle_PointerReleased" />
                         </Canvas>
                     </Grid>
                 </ScrollViewer>
             </Border>
 
             <!-- Draggable splitter: Design surface <-> XAML source -->
-            <Border x:Name="DesignXamlSplitter" Grid.Row="1" Height="6" Background="#FFE0E0E0" VerticalAlignment="Stretch" />
+            <Border x:Name="DesignXamlSplitter" Grid.Row="1" Height="8" Background="#FFE0E0E0" VerticalAlignment="Stretch" />
 
             <Grid Grid.Row="2">
                 <Grid.RowDefinitions>
@@ -158,7 +158,7 @@
             </Grid>
 
             <!-- Draggable splitter: File panel <-> Properties -->
-            <Border x:Name="FilePropertiesSplitter" Grid.Row="1" Height="6" Background="#FFE0E0E0" VerticalAlignment="Stretch" />
+            <Border x:Name="FilePropertiesSplitter" Grid.Row="1" Height="8" Background="#FFE0E0E0" VerticalAlignment="Stretch" />
 
             <Grid Grid.Row="2">
                 <Grid.RowDefinitions>
