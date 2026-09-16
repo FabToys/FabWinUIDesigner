@@ -25,21 +25,27 @@
             </StackPanel>
         </Border>
 
-        <!-- Center: design surface + XAML source view -->
+        <!-- Center: design surface (pasteboard) above, XAML source view below -->
         <Grid Grid.Column="1">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="2*" />
-                <ColumnDefinition Width="1*" />
-            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="2*" />
+                <RowDefinition Height="1*" />
+            </Grid.RowDefinitions>
 
-            <Border Grid.Column="0" BorderBrush="Gray" BorderThickness="0,0,1,0">
+            <!-- Pasteboard: gray background behind the page, like the WPF/VS designer's design
+                 tab background outside the window's own bounds. -->
+            <Border Grid.Row="0" Background="#FFE6E6E6" BorderBrush="Gray" BorderThickness="0,0,0,1">
                 <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
                     <Grid>
+                        <!-- The page itself: white and bordered so it reads as sitting on top of the pasteboard. -->
                         <Border
                             x:Name="DesignSurfaceHost"
                             Margin="16"
                             HorizontalAlignment="Left"
                             VerticalAlignment="Top"
+                            Background="White"
+                            BorderBrush="#FFBFBFBF"
+                            BorderThickness="1"
                             Tapped="DesignSurfaceHost_Tapped" />
 
                         <!-- Selection adorner overlay: same Margin/alignment as DesignSurfaceHost so their
@@ -72,7 +78,7 @@
                 </ScrollViewer>
             </Border>
 
-            <Grid Grid.Column="1">
+            <Grid Grid.Row="1">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
