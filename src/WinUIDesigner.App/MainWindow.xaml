@@ -45,9 +45,7 @@
                             VerticalAlignment="Top"
                             Background="White"
                             BorderBrush="#FFBFBFBF"
-                            BorderThickness="1"
-                            PointerMoved="DesignSurfaceHost_PointerMoved"
-                            PointerReleased="DesignSurfaceHost_PointerReleased" />
+                            BorderThickness="1" />
 
                         <!-- Selection adorner overlay: same Margin/alignment as DesignSurfaceHost so their
                              local (0,0) coincide, letting TransformToVisual(DesignSurfaceHost) bounds be

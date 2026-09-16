@@ -54,12 +54,18 @@ public sealed partial class MainWindow : Window
         InitializeComponent();
         Title = "WinUI Designer";
 
-        // Interactive controls (Button, CheckBox, ...) mark PointerPressed as handled once
-        // they start tracking their own press state, so it never bubbles to a normal XAML
-        // event handler here. handledEventsToo:true makes this fire anyway - only needed for
-        // Pressed; once we've captured the pointer, Moved/Released route to us regardless of
-        // what's underneath, so those stay wired normally in XAML.
+        // Interactive controls (Button, CheckBox, ...) mark PointerPressed/Moved/Released as
+        // handled once they start tracking their own press state, so they never bubble to a
+        // normal XAML event handler here. Capturing the pointer on DesignSurfaceHost does NOT
+        // change this - capture only guarantees continued delivery to the capturing element,
+        // it doesn't take routing priority away from whatever is actually under the pointer,
+        // so the hit control still gets first crack and can still mark events Handled. All
+        // three need handledEventsToo:true to fire regardless (found via real interactive
+        // testing: PointerReleased on a Button was being swallowed the same way, leaving the
+        // move-drag "stuck" since our plain-XAML-wired release handler never ran).
         DesignSurfaceHost.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(DesignSurfaceHost_PointerPressed), true);
+        DesignSurfaceHost.AddHandler(UIElement.PointerMovedEvent, new PointerEventHandler(DesignSurfaceHost_PointerMoved), true);
+        DesignSurfaceHost.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(DesignSurfaceHost_PointerReleased), true);
 
         AutoLoadFirstSample();
     }
