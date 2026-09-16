@@ -54,6 +54,13 @@ public sealed partial class MainWindow : Window
         InitializeComponent();
         Title = "WinUI Designer";
 
+        // Interactive controls (Button, CheckBox, ...) mark PointerPressed as handled once
+        // they start tracking their own press state, so it never bubbles to a normal XAML
+        // event handler here. handledEventsToo:true makes this fire anyway - only needed for
+        // Pressed; once we've captured the pointer, Moved/Released route to us regardless of
+        // what's underneath, so those stay wired normally in XAML.
+        DesignSurfaceHost.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(DesignSurfaceHost_PointerPressed), true);
+
         AutoLoadFirstSample();
     }
 
@@ -202,8 +209,17 @@ public sealed partial class MainWindow : Window
 
     private void DesignSurfaceHost_PointerPressed(object sender, PointerRoutedEventArgs e)
     {
-        var point = e.GetCurrentPoint(DesignSurfaceHost).Position;
-        var hits = VisualTreeHelper.FindElementsInHostCoordinates(point, DesignSurfaceHost);
+        // FindElementsInHostCoordinates wants the point in the window root's coordinate
+        // space ("host" coordinates), not relative to the subtree element passed as its
+        // second argument - passing DesignSurfaceHost-local coordinates here was the bug
+        // that made clicks land far to the right (off by the Toolbox column's width) while
+        // Y looked roughly right (off only by DesignSurfaceHost's own small top margin).
+        var hostPoint = e.GetCurrentPoint(Content).Position;
+        var hits = VisualTreeHelper.FindElementsInHostCoordinates(hostPoint, DesignSurfaceHost);
+
+        // Our own move-drag math needs DesignSurfaceHost-local coordinates instead, since
+        // that's the space Canvas.Left/Top live in.
+        var localPoint = e.GetCurrentPoint(DesignSurfaceHost).Position;
 
         foreach (var hit in hits)
         {
@@ -213,7 +229,7 @@ public sealed partial class MainWindow : Window
 
                 _moveElement = hitElement;
                 _moveDesignElement = designElement;
-                _moveStartPointerPosition = point;
+                _moveStartPointerPosition = localPoint;
                 _moveStartLeft = GetCanvasLeft(hitElement);
                 _moveStartTop = GetCanvasTop(hitElement);
 

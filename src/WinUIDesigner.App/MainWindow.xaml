@@ -46,7 +46,6 @@
                             Background="White"
                             BorderBrush="#FFBFBFBF"
                             BorderThickness="1"
-                            PointerPressed="DesignSurfaceHost_PointerPressed"
                             PointerMoved="DesignSurfaceHost_PointerMoved"
                             PointerReleased="DesignSurfaceHost_PointerReleased" />
 
