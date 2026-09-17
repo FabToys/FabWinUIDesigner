@@ -149,33 +149,21 @@
                 </StackPanel>
 
                 <Grid Grid.Row="1">
-                    <!-- Syntax-coloring spike (research/35-syntax-coloring-deep-plan.md, "overlay"
-                         option): a non-interactive TextBlock painted with colored Runs sits behind
-                         XamlSourceView, which keeps working completely unchanged (still owns all
-                         actual typing/caret/selection/commit logic) except for two things that let
-                         the colored text show through it: Background="Transparent" and
-                         Foreground="Transparent" (the caret and selection highlight don't derive
-                         from Foreground, so they should still show - the thing this spike exists to
-                         confirm). Margin/Padding/FontFamily/FontSize are set explicitly and
-                         identically on both elements (rather than left at template/theme defaults,
-                         which aren't guaranteed to be known ahead of time) so their text lines up. -->
-                    <TextBlock
-                        x:Name="XamlSyntaxOverlay"
-                        IsHitTestVisible="False"
-                        Margin="12"
-                        FontFamily="Consolas"
-                        FontSize="14" />
-
-                    <TextBox
+                    <!-- RichEditBox, not TextBox: the "overlay" syntax-coloring approach
+                         (research/35 §overlay, research/36) turned out to ghost/double-render
+                         text and was abandoned - see research/37. RichEditBox colors its own
+                         text natively via Document.GetRange(...).CharacterFormat.ForegroundColor
+                         (ApplySyntaxColoring), so no second element is needed. Its Document API
+                         (Microsoft.UI.Text.ITextDocument/ITextRange) is non-public in this
+                         project's pinned SDK, so every read/write goes through GetSourceText/
+                         SetSourceText/GetSourceSelectionStart/SetSourceSelection (all using
+                         `dynamic` internally) instead of this element's own properties directly. -->
+                    <RichEditBox
                         x:Name="XamlSourceView"
-                        AcceptsReturn="True"
                         TextWrapping="NoWrap"
                         FontFamily="Consolas"
                         FontSize="14"
                         Margin="8"
-                        Padding="4"
-                        Background="Transparent"
-                        Foreground="Transparent"
                         IsSpellCheckEnabled="False"
                         IsTextPredictionEnabled="False"
                         LostFocus="XamlSourceView_LostFocus"
