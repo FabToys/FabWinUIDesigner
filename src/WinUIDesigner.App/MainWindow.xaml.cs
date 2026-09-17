@@ -10,6 +10,7 @@ using System.Globalization;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Xml;
 using System.Xml.Linq;
 using Windows.Foundation;
@@ -1555,7 +1556,7 @@ public sealed partial class MainWindow : Window
         var currentText = _currentDocument.ToXamlString();
         if (NormalizeLineEndings(typedText) == NormalizeLineEndings(currentText))
         {
-            SetXamlSourceError(null);
+            SetXamlSourceErrors([]);
             return true;
         }
 
@@ -1566,19 +1567,31 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            SetXamlSourceError($"XAML error: {ex.Message}");
+            var offset = ex is XmlException xmlEx ? OffsetOf(typedText, xmlEx.LineNumber, xmlEx.LinePosition) : (int?)null;
+            SetXamlSourceErrors([new XamlErrorListItem($"XAML error: {ex.Message}", offset)]);
             return false;
         }
+
+        var parsedText = parsed.ToXamlString();
 
         // Well-formed XML isn't the same as valid WinUI XAML - check it actually loads before
         // committing it as the current document. Without this, a typo like "Texte" would parse
         // fine, get committed, and only then fail inside RefreshDesignSurfaceFromDocument, at
         // which point the design surface just shows its generic "preview failed" fallback with
         // no way back to the edit except Undo - not the inline, in-place error this pane is for.
-        var (root, status) = RenderPreview(parsed.ToXamlString());
+        var (root, status) = RenderPreview(parsedText);
         if (root is null)
         {
-            SetXamlSourceError($"XAML error: {status}");
+            // FindUnknownPropertyErrors can report several mistakes at once (unlike
+            // XamlReader.Load, which stops at the first) - fall back to its single message only
+            // for error shapes that check doesn't cover (an unknown element, a bad value, ...).
+            var errors = FindUnknownPropertyErrors(parsedText);
+            if (errors.Count == 0)
+            {
+                errors.Add(new XamlErrorListItem($"XAML error: {status}", TryExtractLineOffset(parsedText, status)));
+            }
+
+            SetXamlSourceErrors(errors);
             return false;
         }
 
@@ -1586,8 +1599,139 @@ public sealed partial class MainWindow : Window
         _currentDocument = parsed;
         CommitUndoableChange();
         RefreshDesignSurfaceFromDocument();
-        SetXamlSourceError(null);
+        SetXamlSourceErrors([]);
         return true;
+    }
+
+    /// <summary>
+    /// The MVP control types this designer supports, for validating that a plain attribute in
+    /// the XAML source names a real property or event on that control - see
+    /// <see cref="FindUnknownPropertyErrors"/>. Deliberately the same set the toolbox offers
+    /// (<see cref="AddControl"/>), not every WinUI control that could theoretically appear in
+    /// hand-edited XAML.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, Type> KnownControlTypes = new Dictionary<string, Type>
+    {
+        ["Page"] = typeof(Page),
+        ["Canvas"] = typeof(Canvas),
+        ["Grid"] = typeof(Grid),
+        ["StackPanel"] = typeof(StackPanel),
+        ["Button"] = typeof(Button),
+        ["TextBlock"] = typeof(TextBlock),
+        ["TextBox"] = typeof(TextBox),
+        ["CheckBox"] = typeof(CheckBox),
+        ["ComboBox"] = typeof(ComboBox),
+        ["Image"] = typeof(Image),
+    };
+
+    /// <summary>True for an attribute that represents a plain CLR property/event in XAML's default namespace - excludes namespace declarations (xmlns:...), namespaced attributes (x:Name, mc:Ignorable, ...), and attached properties (e.g. "Canvas.Left", which have a '.' in the local name and aren't resolved via GetProperty/GetEvent on the element's own type).</summary>
+    /// <param name="attribute">Attribute to check.</param>
+    private static bool IsPlainAttribute(XAttribute attribute) =>
+        !attribute.IsNamespaceDeclaration
+        && attribute.Name.Namespace == XNamespace.None
+        && !attribute.Name.LocalName.Contains('.');
+
+    /// <summary>
+    /// Finds every unknown-property/event attribute in the document by reflecting directly
+    /// against each element's real CLR type (<see cref="KnownControlTypes"/>) - unlike
+    /// XamlReader.Load, which stops at the first such problem it hits, this checks every element
+    /// in one pass, so several mistakes (e.g. more than one typo'd property name) can all be
+    /// reported - and jumped to - at once. Only covers this one error shape; other kinds of
+    /// invalid XAML (an unknown element name, a value that fails to convert, ...) still only
+    /// ever produce the single message XamlReader.Load itself reports.
+    /// </summary>
+    /// <param name="text">The document's current XAML text (must already be well-formed XML).</param>
+    /// <returns>Every unknown-property/event error found, in document order, each with a jump-to offset into <paramref name="text"/>.</returns>
+    private static List<XamlErrorListItem> FindUnknownPropertyErrors(string text)
+    {
+        var errors = new List<XamlErrorListItem>();
+
+        XDocument reparsed;
+        try
+        {
+            reparsed = XDocument.Parse(text, LoadOptions.SetLineInfo);
+        }
+        catch (Exception)
+        {
+            return errors; // malformed XML is reported separately, by the caller's own XamlDocument.Parse
+        }
+
+        if (reparsed.Root is null)
+        {
+            return errors;
+        }
+
+        foreach (var element in reparsed.Root.DescendantsAndSelf())
+        {
+            if (!KnownControlTypes.TryGetValue(element.Name.LocalName, out var type))
+            {
+                continue;
+            }
+
+            foreach (var attribute in element.Attributes())
+            {
+                if (!IsPlainAttribute(attribute))
+                {
+                    continue;
+                }
+
+                var name = attribute.Name.LocalName;
+                if (type.GetProperty(name) is not null || type.GetEvent(name) is not null)
+                {
+                    continue;
+                }
+
+                var offset = element is IXmlLineInfo lineInfo && lineInfo.HasLineInfo()
+                    ? OffsetOf(text, lineInfo.LineNumber, lineInfo.LinePosition)
+                    : (int?)null;
+                errors.Add(new XamlErrorListItem($"'{name}' is not a property or event on <{element.Name.LocalName}>.", offset));
+            }
+        }
+
+        return errors;
+    }
+
+    /// <summary>
+    /// Tries to pull a line number out of a WinUI XamlParseException's message (its only place
+    /// with this info - unlike <see cref="XmlException"/>, it has no structured Line/Position
+    /// properties). Jumps to the *start* of that line rather than trying to preserve the exact
+    /// reported column, since the message's position refers to whichever sanitized copy of the
+    /// XAML <see cref="XamlPreviewLoader"/> actually tried (x:Class/event attributes stripped -
+    /// see <see cref="XamlPreviewSanitizer"/>), not the original text shown in the editor - a
+    /// stripped-earlier attribute shifts later columns on the same line, but not the line itself
+    /// (this app's XAML is one element per line).
+    /// </summary>
+    /// <param name="text">The original (unstripped) document text to compute the offset within.</param>
+    /// <param name="exceptionMessage">The exception message to scan for a line number.</param>
+    /// <returns>The offset of the start of that line, or null if no line number could be found.</returns>
+    private static int? TryExtractLineOffset(string text, string exceptionMessage)
+    {
+        var match = Regex.Match(exceptionMessage, @"Line:\s*(\d+)");
+        return match.Success
+            ? OffsetOf(text, int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture), 1)
+            : null;
+    }
+
+    /// <summary>One entry in the Errors tab: a message and, when available, the character offset in the source text to jump to when clicked.</summary>
+    /// <param name="Message">Human-readable error text.</param>
+    /// <param name="Offset">0-based character offset into the XAML source to jump to on click, or null if no position could be determined.</param>
+    private sealed record XamlErrorListItem(string Message, int? Offset)
+    {
+        public override string ToString() => Message;
+    }
+
+    /// <summary>Clicking an error jumps the source view's caret to it (when a position is known) and switches to the Source tab so it's immediately visible.</summary>
+    private void XamlErrorsList_ItemClick(object sender, ItemClickEventArgs e)
+    {
+        if (e.ClickedItem is not XamlErrorListItem { Offset: { } offset })
+        {
+            return;
+        }
+
+        ShowXamlPaneTab(XamlPaneTab.Source);
+        XamlSourceView.SelectionStart = offset;
+        XamlSourceView.SelectionLength = 0;
+        XamlSourceView.Focus(FocusState.Programmatic);
     }
 
     /// <summary>Which of the two bottom-tab panels the XAML pane is currently showing.</summary>
@@ -1608,23 +1752,25 @@ public sealed partial class MainWindow : Window
     private static string NormalizeLineEndings(string text) => text.Replace("\r\n", "\n").Replace('\r', '\n');
 
     /// <summary>
-    /// Updates the Errors tab/warning-icon with the current error (or clears it). Deliberately
-    /// does not auto-switch to the Errors tab on a new error - the user is usually mid-edit in
-    /// the Source tab when an error appears (their cursor and typed text are right there), and
-    /// yanking that away would be worse than just making the Errors tab and warning icon turn
-    /// red so it's noticeable without being disruptive. If the Errors tab happens to already be
-    /// showing when the error clears, switches back to Source since there's nothing left to show.
+    /// Updates the Errors tab/warning-icon/list with the current set of errors (or clears them).
+    /// Deliberately does not auto-switch to the Errors tab when errors first appear - the user
+    /// is usually mid-edit in the Source tab right then (their cursor and typed text are right
+    /// there), and yanking that away would be worse than just making the Errors tab and warning
+    /// icon turn red so it's noticeable without being disruptive. If the Errors tab happens to
+    /// already be showing when the errors clear, switches back to Source since there's nothing
+    /// left to show.
     /// </summary>
-    /// <param name="message">Error text to show, or null to clear the error.</param>
-    private void SetXamlSourceError(string? message)
+    /// <param name="errors">The current errors, or an empty list to clear them.</param>
+    private void SetXamlSourceErrors(IReadOnlyList<XamlErrorListItem> errors)
     {
-        XamlErrorsText.Text = message ?? string.Empty;
+        XamlErrorsList.ItemsSource = errors;
 
-        var hasError = message is not null;
-        ErrorsTabButton.IsEnabled = hasError;
-        XamlSourceWarningButton.Visibility = hasError ? Visibility.Visible : Visibility.Collapsed;
+        var hasErrors = errors.Count > 0;
+        ErrorsTabButton.IsEnabled = hasErrors;
+        ErrorsTabButton.Content = hasErrors ? $"Errors ({errors.Count})" : "Errors";
+        XamlSourceWarningButton.Visibility = hasErrors ? Visibility.Visible : Visibility.Collapsed;
 
-        if (!hasError && _xamlPaneTab == XamlPaneTab.Errors)
+        if (!hasErrors && _xamlPaneTab == XamlPaneTab.Errors)
         {
             ShowXamlPaneTab(XamlPaneTab.Source);
         }
@@ -1647,7 +1793,7 @@ public sealed partial class MainWindow : Window
     {
         _xamlPaneTab = tab;
         XamlSourceView.Visibility = tab == XamlPaneTab.Source ? Visibility.Visible : Visibility.Collapsed;
-        XamlErrorsPanel.Visibility = tab == XamlPaneTab.Errors ? Visibility.Visible : Visibility.Collapsed;
+        XamlErrorsList.Visibility = tab == XamlPaneTab.Errors ? Visibility.Visible : Visibility.Collapsed;
         UpdateXamlPaneTabButtonVisuals();
     }
 

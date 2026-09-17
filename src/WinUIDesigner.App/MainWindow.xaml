@@ -126,7 +126,7 @@
 
                 <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="4" Margin="8,8,8,4">
                     <TextBlock Text="XAML Source" FontWeight="Bold" VerticalAlignment="Center" />
-                    <!-- Collapsed until SetXamlSourceError(non-null) shows it - a second, harder-to-miss
+                    <!-- Collapsed until SetXamlSourceErrors(non-empty) shows it - a second, harder-to-miss
                          cue than the Errors tab alone (see research/23-xaml-error-tabs.md). Clicking it
                          jumps straight to the Errors tab. -->
                     <Button
@@ -155,9 +155,21 @@
                         ScrollViewer.HorizontalScrollBarVisibility="Auto"
                         ScrollViewer.VerticalScrollBarVisibility="Auto" />
 
-                    <ScrollViewer x:Name="XamlErrorsPanel" Visibility="Collapsed" Margin="8">
-                        <TextBlock x:Name="XamlErrorsText" Foreground="Red" TextWrapping="Wrap" FontFamily="Consolas" />
-                    </ScrollViewer>
+                    <!-- IsItemClickEnabled: clicking a row (not just selecting it) jumps the
+                         source view's caret there - see XamlErrorsList_ItemClick. -->
+                    <ListView
+                        x:Name="XamlErrorsList"
+                        Visibility="Collapsed"
+                        Margin="8"
+                        IsItemClickEnabled="True"
+                        ItemClick="XamlErrorsList_ItemClick"
+                        SelectionMode="None">
+                        <ListView.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding}" Foreground="Red" TextWrapping="Wrap" FontFamily="Consolas" />
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
                 </Grid>
 
                 <!-- Tab strip goes BELOW its content (Fabrice's ask), unlike a normal top-tabbed
