@@ -1,0 +1,16 @@
+<Project>
+
+  <!--
+    Pins each project's resolved NuGet dependency graph to packages.lock.json, so restore is a
+    fast local file check instead of re-resolving against NuGet sources every build. Fixes VS
+    re-restoring on nearly every build (this project's multi-RID WindowsAppSDK setup makes that
+    restore slow) and makes builds work fully offline once the lock files exist. Requires one
+    online "dotnet restore" (or VS build) to generate them; after that, a locked-mode restore
+    (see NuGet's RestoreLockedMode docs) fails loudly instead of silently re-resolving if a
+    package reference ever changes without updating the lock file.
+  -->
+  <PropertyGroup>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+
+</Project>
