@@ -56,6 +56,19 @@ public sealed partial class MainWindow : Window
     // tracked explicitly via this control's own GotFocus/LostFocus instead (see the constructor).
     private bool _xamlSourceViewHasFocus;
 
+    // TextControlBox.LoadText resets the caret to the start of the document as a side effect,
+    // which raises SelectionChanged - the same failure mode already fixed twice before for the
+    // old TextBox (research/25, /32, /33): a programmatic reload's caret-reset gets misread by
+    // XamlSourceView_SelectionChanged as "the user moved the caret", re-selecting whatever
+    // element now sits at offset 0. This time it's worse than a wrong selection - re-selecting
+    // tears down and rebuilds the property grid (BuildPropertyGrid clears PropertyGridPanel),
+    // which crashes if triggered while a property-grid control's own event handler (e.g. a text
+    // field's LostFocus, which is what calls SetXamlSourceText via RefreshXamlSourceView in the
+    // first place) is still executing on the call stack - the visual tree gets mutated out from
+    // under a control mid-dispatch. Set around every SetXamlSourceText call so its caret reset
+    // can never drive a reselect; real user caret movement is unaffected.
+    private bool _suppressSourceSelectionSync;
+
     // Undo/Redo: whole-document text snapshots rather than a command pattern - simple, and
     // cheap enough at our document sizes. _pendingUndoSnapshot is set by BeginUndoableChange()
     // right before a mutation starts and consumed by CommitUndoableChange() right after it
@@ -140,6 +153,7 @@ public sealed partial class MainWindow : Window
         RefreshRecentMenu();
 
         UpdateXamlPaneTabButtonVisuals();
+        ShowPropertyPaneTab(PropertyPaneTab.Properties);
 
         // The built-in XML mode (SelectSyntaxHighlightingById(SyntaxHighlightID.XML)) turned out
         // to look broken on real XAML: its one regex for an opening tag greedily matches the
@@ -303,6 +317,7 @@ public sealed partial class MainWindow : Window
         _lastSavedXaml = _currentDocument.ToXamlString();
         UpdateSaveButtonState();
         AddRecentFile(_currentFilePath);
+        SyncEventHandlerStubs();
     }
 
     /// <summary>Prompts for a folder via the folder picker and populates the file tree from it.</summary>
@@ -1079,6 +1094,7 @@ public sealed partial class MainWindow : Window
         SetHandlesVisibility(Visibility.Collapsed);
         SelectionSummaryText.Text = "(no selection)";
         PropertyGridPanel.Children.Clear();
+        EventGridPanel.Children.Clear();
     }
 
     /// <summary>
@@ -1188,32 +1204,29 @@ public sealed partial class MainWindow : Window
         }
 
         PropertyGridPanel.Children.Add(grid);
-        BuildEventsSection(designElement);
+        BuildEventsGrid(designElement);
     }
 
     /// <summary>
-    /// Appends an "Events" sub-section to the property grid (M7 - research/43) for whichever
-    /// common events this element's type has (<see cref="EventGridSchema"/>) - a no-op for a
-    /// type with none, e.g. <c>TextBlock</c>. Laid out the same two-column way as the properties
-    /// grid above it, just with its own small header so the two read as distinct groups within
-    /// the single scrollable <c>PropertyGridPanel</c>.
+    /// Rebuilds the Events tab's own panel (M7 - research/43/44) for whichever common events
+    /// this element's type has (<see cref="EventGridSchema"/>) - a small "(no events)" note for
+    /// a type with none, e.g. <c>TextBlock</c>, rather than leaving the previous selection's
+    /// rows stale on screen. A separate panel/tab from Properties, not a sub-section of it -
+    /// scrolling to find Events under a long property list was inconvenient (Fabrice's
+    /// feedback), so they're now switchable via <see cref="PropertiesTabButton"/>/
+    /// <see cref="EventsTabButton"/> instead of stacked in one scrolling list.
     /// </summary>
     /// <param name="designElement">The selected element to show events for.</param>
-    private void BuildEventsSection(DesignElement designElement)
+    private void BuildEventsGrid(DesignElement designElement)
     {
+        EventGridPanel.Children.Clear();
+
         var descriptors = EventGridSchema.GetEvents(designElement.LocalName);
         if (descriptors.Count == 0)
         {
+            EventGridPanel.Children.Add(new TextBlock { Text = "(no events)", Foreground = new SolidColorBrush(Colors.Gray) });
             return;
         }
-
-        PropertyGridPanel.Children.Add(new TextBlock
-        {
-            Text = "Events",
-            FontWeight = FontWeights.Bold,
-            FontSize = 12,
-            Margin = new Thickness(0, 6, 0, 2),
-        });
 
         var grid = new Grid();
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(90) });
@@ -1243,7 +1256,7 @@ public sealed partial class MainWindow : Window
             grid.Children.Add(editor);
         }
 
-        PropertyGridPanel.Children.Add(grid);
+        EventGridPanel.Children.Add(grid);
     }
 
     /// <summary>Creates the property grid's editor control for one property - a <see cref="CheckBox"/>, <see cref="ComboBox"/>, or plain <see cref="TextBox"/> depending on the descriptor's kind - wired to call <see cref="ApplyPropertyEdit"/> when its value changes.</summary>
@@ -1435,10 +1448,9 @@ public sealed partial class MainWindow : Window
         CommitUndoableChange();
         RefreshXamlSourceView();
 
-        if (handlerName.Length > 0)
-        {
-            EnsureEventHandlerStub(descriptor.Name, handlerName);
-        }
+        // No per-edit codegen here - stubs are generated for the whole document at once, on
+        // Save (SyncEventHandlerStubs), per Fabrice's expectation that this happens at save time
+        // rather than on every field blur.
     }
 
     /// <summary>True for a string that's a valid, unqualified C# identifier - good enough for a generated method name without pulling in a full C# lexer for it.</summary>
@@ -1446,19 +1458,19 @@ public sealed partial class MainWindow : Window
     private static bool IsValidIdentifier(string text) => Regex.IsMatch(text, @"^[A-Za-z_][A-Za-z0-9_]*$");
 
     /// <summary>
-    /// After <see cref="ApplyEventEdit"/> commits a handler name to the XAML, makes sure a
-    /// matching stub method exists in the document's paired `.xaml.cs` file
-    /// (<see cref="EventHandlerCodeGen"/> - M7, research/43-m7-event-codegen-plan.md). Quietly
-    /// does nothing if the document has no file path yet (a brand-new unsaved document - nothing
-    /// to derive a `.xaml.cs` path from) or no `x:Class` (hand-authored XAML with no code-behind
-    /// class to generate into) - both are legitimate states, not errors: the XAML attribute is
-    /// still set either way, this only covers the code-behind stub.
+    /// Scans the whole document for every event attribute currently set on any element (per
+    /// <see cref="EventGridSchema"/>'s curated per-type list) and makes sure a matching stub
+    /// method exists for each in the document's paired `.xaml.cs` file
+    /// (<see cref="EventHandlerCodeGen"/> - M7, research/43/44). Called after a successful save,
+    /// not on every event-field edit - generating (and writing to disk) on every field blur, before
+    /// the document itself is even saved, surprised Fabrice in testing.
+    /// Quietly does nothing if the document has no `x:Class` (hand-authored XAML with no
+    /// code-behind class to generate into) or no event attributes are actually set anywhere -
+    /// both are legitimate states, not errors.
     /// </summary>
-    /// <param name="eventName">The XAML event name, e.g. "Click" - used to reflect the live control's real delegate signature.</param>
-    /// <param name="methodName">The handler method name just committed to the XAML attribute.</param>
-    private void EnsureEventHandlerStub(string eventName, string methodName)
+    private void SyncEventHandlerStubs()
     {
-        if (_currentFilePath is null || _currentDocument is null || _selectedLiveElement is null)
+        if (_currentFilePath is null || _currentDocument is null)
         {
             return;
         }
@@ -1469,30 +1481,50 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        // Reflects the same way FindUnknownPropertyErrors does - the real delegate's parameter
-        // types are the source of truth for the stub's signature, not a hardcoded per-event
-        // table (EventHandlerCodeGen itself stays WinUI-agnostic - see its own doc comment).
-        var eventInfo = _selectedLiveElement.GetType().GetEvent(eventName);
-        var invokeParameters = eventInfo?.EventHandlerType?.GetMethod("Invoke")?.GetParameters();
-        if (invokeParameters is not { Length: 2 })
+        var stubs = new List<EventHandlerStub>();
+        foreach (var (liveElement, designElement) in _liveToDesign)
         {
-            return; // not a (sender, args)-shaped event - outside this MVP's stub generator
+            foreach (var descriptor in EventGridSchema.GetEvents(designElement.LocalName))
+            {
+                var methodName = designElement.GetAttribute(descriptor.Name);
+                if (methodName is not { Length: > 0 } || !IsValidIdentifier(methodName))
+                {
+                    continue;
+                }
+
+                // Reflects the same way FindUnknownPropertyErrors does - the real delegate's
+                // parameter types are the source of truth for the stub's signature, not a
+                // hardcoded per-event table (EventHandlerCodeGen itself stays WinUI-agnostic -
+                // see its own doc comment).
+                var eventInfo = liveElement.GetType().GetEvent(descriptor.Name);
+                var invokeParameters = eventInfo?.EventHandlerType?.GetMethod("Invoke")?.GetParameters();
+                if (invokeParameters is not { Length: 2 })
+                {
+                    continue; // not a (sender, args)-shaped event - outside this MVP's stub generator
+                }
+
+                stubs.Add(new EventHandlerStub(descriptor.Name, methodName, invokeParameters[0].ParameterType.FullName!, invokeParameters[1].ParameterType.FullName!));
+            }
         }
 
-        var stub = new EventHandlerStub(eventName, methodName, invokeParameters[0].ParameterType.FullName!, invokeParameters[1].ParameterType.FullName!);
+        if (stubs.Count == 0)
+        {
+            return;
+        }
+
         var codeBehindPath = _currentFilePath + ".cs";
 
         try
         {
             var existingSource = File.Exists(codeBehindPath) ? File.ReadAllText(codeBehindPath) : null;
-            var updated = EventHandlerCodeGen.EnsureEventHandlers(existingSource, className, [stub]);
+            var updated = EventHandlerCodeGen.EnsureEventHandlers(existingSource, className, stubs);
             File.WriteAllText(codeBehindPath, updated);
         }
         catch (Exception ex)
         {
-            // Best-effort - a codegen hiccup must never crash the designer or undo the XAML edit
-            // that already committed successfully above.
-            WriteLog($"EnsureEventHandlerStub failed: {ex}");
+            // Best-effort - a codegen hiccup must never crash the designer or interrupt Save,
+            // which has already succeeded by the time this runs.
+            WriteLog($"SyncEventHandlerStubs failed: {ex}");
         }
     }
 
@@ -1594,7 +1626,7 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private void XamlSourceView_SelectionChanged()
     {
-        if (_currentDocument is null || _xamlPaneTab != XamlPaneTab.Source)
+        if (_suppressSourceSelectionSync || _currentDocument is null || _xamlPaneTab != XamlPaneTab.Source)
         {
             return;
         }
@@ -2047,6 +2079,48 @@ public sealed partial class MainWindow : Window
         ErrorsTabButton.Foreground = new SolidColorBrush(hasError ? Colors.Red : Colors.Black);
     }
 
+    /// <summary>Which of the right panel's two tabs is currently showing (M7 - research/44).</summary>
+    private enum PropertyPaneTab
+    {
+        Properties,
+        Events,
+    }
+
+    private PropertyPaneTab _propertyPaneTab = PropertyPaneTab.Properties;
+
+    private void PropertiesTabButton_Click(object sender, RoutedEventArgs e) => ShowPropertyPaneTab(PropertyPaneTab.Properties);
+
+    private void EventsTabButton_Click(object sender, RoutedEventArgs e) => ShowPropertyPaneTab(PropertyPaneTab.Events);
+
+    /// <summary>Switches which of the Properties/Events panels is visible and updates the tab buttons to match. Deliberately doesn't reset to Properties on every new selection - if Fabrice is looking at Events and picks a different control, staying on Events is less disruptive than snapping back.</summary>
+    /// <param name="tab">The panel to show.</param>
+    private void ShowPropertyPaneTab(PropertyPaneTab tab)
+    {
+        _propertyPaneTab = tab;
+
+        // Toggles the ScrollViewers, not just the StackPanels they wrap - an empty but still-
+        // Visible ScrollViewer sitting on top in z-order still intercepts every pointer event
+        // over the whole panel even with nothing visibly inside it, which is what made the
+        // Properties tab appear entirely read-only the first time this was tried.
+        PropertyGridScrollViewer.Visibility = tab == PropertyPaneTab.Properties ? Visibility.Visible : Visibility.Collapsed;
+        EventGridScrollViewer.Visibility = tab == PropertyPaneTab.Events ? Visibility.Visible : Visibility.Collapsed;
+        UpdatePropertyPaneTabButtonVisuals();
+    }
+
+    /// <summary>Styles the two tab buttons the same bold-plus-highlighted-background way as <see cref="UpdateXamlPaneTabButtonVisuals"/> does for Source/Errors.</summary>
+    private void UpdatePropertyPaneTabButtonVisuals()
+    {
+        PropertiesTabButton.FontWeight = _propertyPaneTab == PropertyPaneTab.Properties ? FontWeights.Bold : FontWeights.Normal;
+        PropertiesTabButton.Background = _propertyPaneTab == PropertyPaneTab.Properties
+            ? new SolidColorBrush(Colors.White)
+            : new SolidColorBrush(Colors.Transparent);
+
+        EventsTabButton.FontWeight = _propertyPaneTab == PropertyPaneTab.Events ? FontWeights.Bold : FontWeights.Normal;
+        EventsTabButton.Background = _propertyPaneTab == PropertyPaneTab.Events
+            ? new SolidColorBrush(Colors.White)
+            : new SolidColorBrush(Colors.Transparent);
+    }
+
     /// <summary>Call right before a mutation starts. Paired with <see cref="CommitUndoableChange"/>.</summary>
     private void BeginUndoableChange()
     {
@@ -2115,7 +2189,17 @@ public sealed partial class MainWindow : Window
     private void SetXamlSourceText(string text)
     {
         // LoadText, not the Text property - see the comment in FormatDocumentButton_Click for why.
-        XamlSourceView.LoadText(text, autodetectTabsSpaces: false);
+        // Suppressed around the call - see _suppressSourceSelectionSync's own comment for why.
+        _suppressSourceSelectionSync = true;
+        try
+        {
+            XamlSourceView.LoadText(text, autodetectTabsSpaces: false);
+        }
+        finally
+        {
+            _suppressSourceSelectionSync = false;
+        }
+
         UpdateSaveButtonState();
     }
 

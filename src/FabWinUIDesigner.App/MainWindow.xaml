@@ -283,16 +283,35 @@
             <Grid Grid.Row="2">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
 
-                <StackPanel Grid.Row="0" Padding="8" Spacing="4">
-                    <TextBlock Text="Properties" FontWeight="Bold" />
+                <!-- Properties/Events tab pair (M7 - research/44), on top per Fabrice's ask -
+                     unlike the XAML pane's Source/Errors tabs (deliberately below their content,
+                     per his separate earlier ask there - see research/23) - scrolling to find
+                     Events under Properties was inconvenient, so they're now two switchable
+                     panels instead of one long scrolling list. -->
+                <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="1" BorderBrush="Gray" BorderThickness="0,0,0,1">
+                    <Button x:Name="PropertiesTabButton" Content="Properties" Click="PropertiesTabButton_Click" Padding="12,4" CornerRadius="0" BorderThickness="0" />
+                    <Button x:Name="EventsTabButton" Content="Events" Click="EventsTabButton_Click" Padding="12,4" CornerRadius="0" BorderThickness="0" />
+                </StackPanel>
+
+                <StackPanel Grid.Row="1" Padding="8" Spacing="4">
                     <TextBlock x:Name="SelectionSummaryText" Text="(no selection)" Foreground="Gray" />
                 </StackPanel>
 
-                <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                <!-- Visibility toggles on these ScrollViewers themselves (ShowPropertyPaneTab),
+                     not just the StackPanels they wrap - an empty but still-Visible ScrollViewer
+                     sitting on top in z-order would otherwise swallow every pointer event over
+                     the whole panel, exactly what made the Properties tab appear entirely
+                     read-only when this was first tried. -->
+                <ScrollViewer x:Name="PropertyGridScrollViewer" Grid.Row="2" VerticalScrollBarVisibility="Auto">
                     <StackPanel x:Name="PropertyGridPanel" Padding="8,0,8,8" Spacing="6" />
+                </ScrollViewer>
+
+                <ScrollViewer x:Name="EventGridScrollViewer" Grid.Row="2" VerticalScrollBarVisibility="Auto">
+                    <StackPanel x:Name="EventGridPanel" Padding="8,0,8,8" Spacing="6" />
                 </ScrollViewer>
             </Grid>
         </Grid>
