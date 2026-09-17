@@ -1,7 +1,8 @@
 <Window
     x:Class="WinUIDesigner.App.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:WinUIDesigner.App">
 
     <Grid x:Name="RootGrid" KeyDown="RootGrid_KeyDown">
         <Grid.ColumnDefinitions>
@@ -27,7 +28,7 @@
         </Border>
 
         <!-- Draggable splitter: Toolbox <-> Center -->
-        <Border x:Name="ToolboxSplitter" Grid.Column="1" Width="8" Background="#FFE0E0E0" HorizontalAlignment="Stretch" />
+        <local:SplitterThumb x:Name="ToolboxSplitter" Grid.Column="1" Width="8" Background="#FFE0E0E0" HorizontalAlignment="Stretch" />
 
         <!-- Center: design surface (pasteboard) above, XAML source view below -->
         <Grid Grid.Column="2">
@@ -81,22 +82,40 @@
                                 <TextBlock x:Name="SelectionLabelText" FontSize="11" Foreground="#FF1F3A52" />
                             </Border>
 
-                            <!-- Resize handles: 4 corners + 4 edge midpoints, VS-style small squares. -->
-                            <Rectangle x:Name="HandleNW" Tag="NW" Visibility="Collapsed" Width="7" Height="7" Fill="White" Stroke="#FF5B7C99" StrokeThickness="1" PointerPressed="ResizeHandle_PointerPressed" PointerMoved="ResizeHandle_PointerMoved" PointerReleased="ResizeHandle_PointerReleased" PointerCaptureLost="ResizeHandle_PointerReleased" />
-                            <Rectangle x:Name="HandleN" Tag="N" Visibility="Collapsed" Width="7" Height="7" Fill="White" Stroke="#FF5B7C99" StrokeThickness="1" PointerPressed="ResizeHandle_PointerPressed" PointerMoved="ResizeHandle_PointerMoved" PointerReleased="ResizeHandle_PointerReleased" PointerCaptureLost="ResizeHandle_PointerReleased" />
-                            <Rectangle x:Name="HandleNE" Tag="NE" Visibility="Collapsed" Width="7" Height="7" Fill="White" Stroke="#FF5B7C99" StrokeThickness="1" PointerPressed="ResizeHandle_PointerPressed" PointerMoved="ResizeHandle_PointerMoved" PointerReleased="ResizeHandle_PointerReleased" PointerCaptureLost="ResizeHandle_PointerReleased" />
-                            <Rectangle x:Name="HandleW" Tag="W" Visibility="Collapsed" Width="7" Height="7" Fill="White" Stroke="#FF5B7C99" StrokeThickness="1" PointerPressed="ResizeHandle_PointerPressed" PointerMoved="ResizeHandle_PointerMoved" PointerReleased="ResizeHandle_PointerReleased" PointerCaptureLost="ResizeHandle_PointerReleased" />
-                            <Rectangle x:Name="HandleE" Tag="E" Visibility="Collapsed" Width="7" Height="7" Fill="White" Stroke="#FF5B7C99" StrokeThickness="1" PointerPressed="ResizeHandle_PointerPressed" PointerMoved="ResizeHandle_PointerMoved" PointerReleased="ResizeHandle_PointerReleased" PointerCaptureLost="ResizeHandle_PointerReleased" />
-                            <Rectangle x:Name="HandleSW" Tag="SW" Visibility="Collapsed" Width="7" Height="7" Fill="White" Stroke="#FF5B7C99" StrokeThickness="1" PointerPressed="ResizeHandle_PointerPressed" PointerMoved="ResizeHandle_PointerMoved" PointerReleased="ResizeHandle_PointerReleased" PointerCaptureLost="ResizeHandle_PointerReleased" />
-                            <Rectangle x:Name="HandleS" Tag="S" Visibility="Collapsed" Width="7" Height="7" Fill="White" Stroke="#FF5B7C99" StrokeThickness="1" PointerPressed="ResizeHandle_PointerPressed" PointerMoved="ResizeHandle_PointerMoved" PointerReleased="ResizeHandle_PointerReleased" PointerCaptureLost="ResizeHandle_PointerReleased" />
-                            <Rectangle x:Name="HandleSE" Tag="SE" Visibility="Collapsed" Width="7" Height="7" Fill="White" Stroke="#FF5B7C99" StrokeThickness="1" PointerPressed="ResizeHandle_PointerPressed" PointerMoved="ResizeHandle_PointerMoved" PointerReleased="ResizeHandle_PointerReleased" PointerCaptureLost="ResizeHandle_PointerReleased" />
+                            <!-- Resize handles: 4 corners + 4 edge midpoints, VS-style small squares.
+                                 local:ResizeHandle (not a plain Rectangle) so hover can show a resize
+                                 cursor - see research/17-resize-handle-hover-cursor.md. -->
+                            <local:ResizeHandle x:Name="HandleNW" Tag="NW" Visibility="Collapsed" Width="7" Height="7" PointerPressed="ResizeHandle_PointerPressed" PointerMoved="ResizeHandle_PointerMoved" PointerReleased="ResizeHandle_PointerReleased" PointerCaptureLost="ResizeHandle_PointerReleased">
+                                <Rectangle Fill="White" Stroke="#FF5B7C99" StrokeThickness="1" />
+                            </local:ResizeHandle>
+                            <local:ResizeHandle x:Name="HandleN" Tag="N" Visibility="Collapsed" Width="7" Height="7" PointerPressed="ResizeHandle_PointerPressed" PointerMoved="ResizeHandle_PointerMoved" PointerReleased="ResizeHandle_PointerReleased" PointerCaptureLost="ResizeHandle_PointerReleased">
+                                <Rectangle Fill="White" Stroke="#FF5B7C99" StrokeThickness="1" />
+                            </local:ResizeHandle>
+                            <local:ResizeHandle x:Name="HandleNE" Tag="NE" Visibility="Collapsed" Width="7" Height="7" PointerPressed="ResizeHandle_PointerPressed" PointerMoved="ResizeHandle_PointerMoved" PointerReleased="ResizeHandle_PointerReleased" PointerCaptureLost="ResizeHandle_PointerReleased">
+                                <Rectangle Fill="White" Stroke="#FF5B7C99" StrokeThickness="1" />
+                            </local:ResizeHandle>
+                            <local:ResizeHandle x:Name="HandleW" Tag="W" Visibility="Collapsed" Width="7" Height="7" PointerPressed="ResizeHandle_PointerPressed" PointerMoved="ResizeHandle_PointerMoved" PointerReleased="ResizeHandle_PointerReleased" PointerCaptureLost="ResizeHandle_PointerReleased">
+                                <Rectangle Fill="White" Stroke="#FF5B7C99" StrokeThickness="1" />
+                            </local:ResizeHandle>
+                            <local:ResizeHandle x:Name="HandleE" Tag="E" Visibility="Collapsed" Width="7" Height="7" PointerPressed="ResizeHandle_PointerPressed" PointerMoved="ResizeHandle_PointerMoved" PointerReleased="ResizeHandle_PointerReleased" PointerCaptureLost="ResizeHandle_PointerReleased">
+                                <Rectangle Fill="White" Stroke="#FF5B7C99" StrokeThickness="1" />
+                            </local:ResizeHandle>
+                            <local:ResizeHandle x:Name="HandleSW" Tag="SW" Visibility="Collapsed" Width="7" Height="7" PointerPressed="ResizeHandle_PointerPressed" PointerMoved="ResizeHandle_PointerMoved" PointerReleased="ResizeHandle_PointerReleased" PointerCaptureLost="ResizeHandle_PointerReleased">
+                                <Rectangle Fill="White" Stroke="#FF5B7C99" StrokeThickness="1" />
+                            </local:ResizeHandle>
+                            <local:ResizeHandle x:Name="HandleS" Tag="S" Visibility="Collapsed" Width="7" Height="7" PointerPressed="ResizeHandle_PointerPressed" PointerMoved="ResizeHandle_PointerMoved" PointerReleased="ResizeHandle_PointerReleased" PointerCaptureLost="ResizeHandle_PointerReleased">
+                                <Rectangle Fill="White" Stroke="#FF5B7C99" StrokeThickness="1" />
+                            </local:ResizeHandle>
+                            <local:ResizeHandle x:Name="HandleSE" Tag="SE" Visibility="Collapsed" Width="7" Height="7" PointerPressed="ResizeHandle_PointerPressed" PointerMoved="ResizeHandle_PointerMoved" PointerReleased="ResizeHandle_PointerReleased" PointerCaptureLost="ResizeHandle_PointerReleased">
+                                <Rectangle Fill="White" Stroke="#FF5B7C99" StrokeThickness="1" />
+                            </local:ResizeHandle>
                         </Canvas>
                     </Grid>
                 </ScrollViewer>
             </Border>
 
             <!-- Draggable splitter: Design surface <-> XAML source -->
-            <Border x:Name="DesignXamlSplitter" Grid.Row="1" Height="8" Background="#FFE0E0E0" VerticalAlignment="Stretch" />
+            <local:SplitterThumb x:Name="DesignXamlSplitter" Grid.Row="1" Height="8" Background="#FFE0E0E0" VerticalAlignment="Stretch" />
 
             <Grid Grid.Row="2">
                 <Grid.RowDefinitions>
@@ -136,14 +155,23 @@
                 <TextBlock Grid.Row="0" Text="File" FontWeight="Bold" Margin="0,0,0,6" />
 
                 <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="4" Margin="0,0,0,6">
+                    <Button x:Name="NewButton" Click="NewButton_Click" Padding="6,4" ToolTipService.ToolTip="New File">
+                        <FontIcon Glyph="&#xE7C3;" FontSize="14" />
+                    </Button>
                     <Button x:Name="OpenFolderButton" Click="OpenFolderButton_Click" Padding="6,4" ToolTipService.ToolTip="Open Folder...">
-                        <TextBlock Text="&#128193;" FontSize="14" />
+                        <FontIcon Glyph="&#xE8DA;" FontSize="14" />
                     </Button>
                     <Button x:Name="OpenButton" Click="OpenButton_Click" Padding="6,4" ToolTipService.ToolTip="Open File...">
-                        <TextBlock Text="&#128196;" FontSize="14" />
+                        <FontIcon Glyph="&#xE8E5;" FontSize="14" />
                     </Button>
                     <Button x:Name="SaveButton" Click="SaveButton_Click" Padding="6,4" IsEnabled="False" ToolTipService.ToolTip="Save">
-                        <TextBlock Text="&#128190;" FontSize="14" />
+                        <FontIcon Glyph="&#xE74E;" FontSize="14" />
+                    </Button>
+                    <Button x:Name="RecentButton" Padding="6,4" ToolTipService.ToolTip="Recent Files and Folders">
+                        <FontIcon Glyph="&#xE81C;" FontSize="14" />
+                        <Button.Flyout>
+                            <MenuFlyout x:Name="RecentFlyout" Placement="Bottom" />
+                        </Button.Flyout>
                     </Button>
                 </StackPanel>
 
@@ -158,7 +186,7 @@
             </Grid>
 
             <!-- Draggable splitter: File panel <-> Properties -->
-            <Border x:Name="FilePropertiesSplitter" Grid.Row="1" Height="8" Background="#FFE0E0E0" VerticalAlignment="Stretch" />
+            <local:SplitterThumb x:Name="FilePropertiesSplitter" Grid.Row="1" Height="8" Background="#FFE0E0E0" VerticalAlignment="Stretch" />
 
             <Grid Grid.Row="2">
                 <Grid.RowDefinitions>

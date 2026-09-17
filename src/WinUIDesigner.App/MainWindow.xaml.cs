@@ -21,12 +21,19 @@ using XamlDocument = WinUIDesigner.Document.XamlDocument;
 
 namespace WinUIDesigner.App;
 
+/// <summary>
+/// The designer's single window: file browser, toolbox, design surface (with selection/move/resize
+/// adorners), XAML source view, and property grid, all wired directly in code-behind against a
+/// single in-memory <see cref="XamlDocument"/>.
+/// </summary>
 public sealed partial class MainWindow : Window
 {
     private static readonly string SpikeLogPath = Path.Combine(Path.GetTempPath(), "WinUIDesigner", "m2-xamlreader-spike.log");
     private static readonly string SnapshotPath = Path.Combine(Path.GetTempPath(), "WinUIDesigner", "preview-snapshot.png");
     private static readonly string LayoutConfigPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WinUIDesigner", "layout.json");
+    private static readonly string RecentConfigPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WinUIDesigner", "recent.json");
 
     private const double MinElementSize = 8;
     private const double HandleSize = 7;
@@ -68,6 +75,7 @@ public sealed partial class MainWindow : Window
     private double _resizeStartWidth;
     private double _resizeStartHeight;
 
+    /// <summary>Wires up splitters, hover cursors, design-surface pointer routing, and loads the recent-files/folders menu. Starts with no document open.</summary>
     public MainWindow()
     {
         InitializeComponent();
@@ -81,6 +89,22 @@ public sealed partial class MainWindow : Window
         AttachRowSplitter(DesignXamlSplitter, XamlSourceRow, minHeight: 80, maxHeight: 600, SavePanelLayout, invert: true);
         AttachRowSplitter(FilePropertiesSplitter, FilePanelRow, minHeight: 80, maxHeight: 600, SavePanelLayout);
         Closed += (_, _) => SavePanelLayout();
+
+        // Hover cursor: a plain <Grid> can't show one (UIElement.ProtectedCursor is protected),
+        // hence SplitterThumb/ResizeHandle - see their doc comment / research/16-splitter-hover-cursor.md
+        // and research/17-resize-handle-hover-cursor.md.
+        ToolboxSplitter.SetCursor(InputSystemCursorShape.SizeWestEast);
+        DesignXamlSplitter.SetCursor(InputSystemCursorShape.SizeNorthSouth);
+        FilePropertiesSplitter.SetCursor(InputSystemCursorShape.SizeNorthSouth);
+
+        HandleNW.SetCursor(InputSystemCursorShape.SizeNorthwestSoutheast);
+        HandleSE.SetCursor(InputSystemCursorShape.SizeNorthwestSoutheast);
+        HandleNE.SetCursor(InputSystemCursorShape.SizeNortheastSouthwest);
+        HandleSW.SetCursor(InputSystemCursorShape.SizeNortheastSouthwest);
+        HandleN.SetCursor(InputSystemCursorShape.SizeNorthSouth);
+        HandleS.SetCursor(InputSystemCursorShape.SizeNorthSouth);
+        HandleW.SetCursor(InputSystemCursorShape.SizeWestEast);
+        HandleE.SetCursor(InputSystemCursorShape.SizeWestEast);
 
         // Interactive controls (Button, CheckBox, ...) mark PointerPressed/Moved/Released as
         // handled once they start tracking their own press state, so they never bubble to a
@@ -100,9 +124,52 @@ public sealed partial class MainWindow : Window
         // same handler is safe: it already guards on _moveElement being non-null.
         DesignSurfaceHost.AddHandler(UIElement.PointerCaptureLostEvent, new PointerEventHandler(DesignSurfaceHost_PointerReleased), true);
 
-        AutoLoadFirstSample();
+        LoadRecentLists();
+        RefreshRecentMenu();
     }
 
+    /// <summary>A blank single-Canvas Page, same shape as the sample fixtures minus x:Class (a brand-new file has no code-behind yet).</summary>
+    private const string NewDocumentTemplate =
+        "<Page xmlns=\"http://schemas.microsoft.com/winfx/2006/xaml/presentation\" xmlns:x=\"http://schemas.microsoft.com/winfx/2006/xaml\" xmlns:d=\"http://schemas.microsoft.com/expression/blend/2008\" xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\" mc:Ignorable=\"d\">\n" +
+        "    <Canvas Width=\"400\" Height=\"300\" Background=\"White\" />\n" +
+        "</Page>";
+
+    /// <summary>Starts a blank document, confirming discard first if the current one has unsaved changes.</summary>
+    private async void NewButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (SaveButton.IsEnabled)
+        {
+            var dialog = new ContentDialog
+            {
+                Title = "Discard unsaved changes?",
+                Content = "This file has unsaved changes. Starting a new file will discard them.",
+                PrimaryButtonText = "Discard",
+                CloseButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Close,
+                XamlRoot = Content.XamlRoot,
+            };
+
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+            {
+                return;
+            }
+        }
+
+        var doc = XamlDocument.Parse(NewDocumentTemplate);
+        _currentDocument = doc;
+        _currentFilePath = null;
+        CurrentFileText.Text = "(no file open)";
+
+        _undoStack.Clear();
+        _redoStack.Clear();
+        _pendingUndoSnapshot = null;
+        _lastSavedXaml = doc.ToXamlString();
+
+        RefreshDesignSurfaceFromDocument();
+        UpdateSaveButtonState();
+    }
+
+    /// <summary>Prompts for a `.xaml` file via the file picker and loads it.</summary>
     private async void OpenButton_Click(object sender, RoutedEventArgs e)
     {
         var picker = new FileOpenPicker();
@@ -117,18 +184,40 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void SaveButton_Click(object sender, RoutedEventArgs e)
+    /// <summary>Saves the current document, prompting for a location first ("Save As" semantics) if it doesn't have a path yet (i.e. it came from New File).</summary>
+    private async void SaveButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_currentDocument is null || _currentFilePath is null)
+        if (_currentDocument is null)
         {
             return;
+        }
+
+        // A document created via New File has no path yet - prompt for one, same as "Save As".
+        if (_currentFilePath is null)
+        {
+            var picker = new FileSavePicker();
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+            WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
+            picker.FileTypeChoices.Add("XAML File", new List<string> { ".xaml" });
+            picker.SuggestedFileName = "NewPage";
+
+            var file = await picker.PickSaveFileAsync();
+            if (file is null)
+            {
+                return;
+            }
+
+            _currentFilePath = file.Path;
+            CurrentFileText.Text = _currentFilePath;
         }
 
         _currentDocument.Save(_currentFilePath);
         _lastSavedXaml = _currentDocument.ToXamlString();
         UpdateSaveButtonState();
+        AddRecentFile(_currentFilePath);
     }
 
+    /// <summary>Prompts for a folder via the folder picker and populates the file tree from it.</summary>
     private async void OpenFolderButton_Click(object sender, RoutedEventArgs e)
     {
         var picker = new FolderPicker();
@@ -140,6 +229,7 @@ public sealed partial class MainWindow : Window
         if (folder is not null)
         {
             PopulateFileTree(folder.Path);
+            AddRecentFolder(folder.Path);
         }
     }
 
@@ -150,6 +240,7 @@ public sealed partial class MainWindow : Window
     /// Explorer file nesting - there's no code editor yet (that's later, around M7/M8), so
     /// selecting the .cs node just shows its path rather than opening it.
     /// </summary>
+    /// <param name="folderPath">Absolute path of the folder to list `.xaml` files from.</param>
     private void PopulateFileTree(string folderPath)
     {
         FileTreeView.RootNodes.Clear();
@@ -184,6 +275,7 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    /// <summary>Loads the double-tapped file tree node, if it's a `.xaml` node (double-tapping a nested `.xaml.cs` node does nothing - see <see cref="FileTreeNodeInfo"/>).</summary>
     private void FileTreeView_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
     {
         if (FileTreeView.SelectedNode?.Content is FileTreeNodeInfo { IsXaml: true } info)
@@ -192,48 +284,168 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    /// <summary>Content of one file-tree node - either a `.xaml` file or a nested `.xaml.cs` code-behind file.</summary>
+    /// <param name="DisplayName">File name shown in the tree (name + extension, no path).</param>
+    /// <param name="FullPath">Absolute path used to load the file or show its path.</param>
+    /// <param name="IsXaml">True for a `.xaml` node (double-click loads it); false for a nested `.xaml.cs` node (there's no code editor yet, so it's display-only).</param>
     private sealed record FileTreeNodeInfo(string DisplayName, string FullPath, bool IsXaml)
     {
         public override string ToString() => DisplayName;
     }
 
-    private void AutoLoadFirstSample()
+    private const int MaxRecentEntries = 8;
+    private readonly List<string> _recentFiles = new();
+    private readonly List<string> _recentFolders = new();
+
+    /// <summary>On-disk shape of <see cref="RecentConfigPath"/>.</summary>
+    /// <param name="Files">Recently opened file paths, most-recent-first.</param>
+    /// <param name="Folders">Recently opened folder paths, most-recent-first.</param>
+    private sealed record RecentLists(List<string> Files, List<string> Folders);
+
+    /// <summary>Loads <see cref="_recentFiles"/>/<see cref="_recentFolders"/> from <see cref="RecentConfigPath"/>. Leaves both empty if the file is missing or unreadable.</summary>
+    private void LoadRecentLists()
     {
-        var samplesDir = FindSamplesDirectory();
-        if (samplesDir is null)
+        try
+        {
+            if (!File.Exists(RecentConfigPath))
+            {
+                return;
+            }
+
+            var lists = JsonSerializer.Deserialize<RecentLists>(File.ReadAllText(RecentConfigPath));
+            if (lists is null)
+            {
+                return;
+            }
+
+            _recentFiles.AddRange(lists.Files);
+            _recentFolders.AddRange(lists.Folders);
+        }
+        catch (Exception)
+        {
+            // Corrupt/unreadable config - just start with empty recent lists.
+        }
+    }
+
+    /// <summary>Persists <see cref="_recentFiles"/>/<see cref="_recentFolders"/> to <see cref="RecentConfigPath"/>. Best-effort - a write failure is swallowed.</summary>
+    private void SaveRecentLists()
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(RecentConfigPath)!);
+            File.WriteAllText(RecentConfigPath, JsonSerializer.Serialize(new RecentLists(_recentFiles, _recentFolders)));
+        }
+        catch (Exception)
+        {
+            // Best-effort - failing to persist recent lists isn't fatal.
+        }
+    }
+
+    /// <summary>Adds a file to the front of the recent-files list.</summary>
+    /// <param name="path">Absolute path of the file just opened or saved.</param>
+    private void AddRecentFile(string path) => AddRecent(_recentFiles, path);
+
+    /// <summary>Adds a folder to the front of the recent-folders list.</summary>
+    /// <param name="path">Absolute path of the folder just opened.</param>
+    private void AddRecentFolder(string path) => AddRecent(_recentFolders, path);
+
+    /// <summary>Moves <paramref name="path"/> to the front of <paramref name="list"/> (de-duplicated, case-insensitively), trims it to <see cref="MaxRecentEntries"/>, then persists and re-renders the Recent menu.</summary>
+    /// <param name="list">Either <see cref="_recentFiles"/> or <see cref="_recentFolders"/>.</param>
+    /// <param name="path">Absolute path to add.</param>
+    private void AddRecent(List<string> list, string path)
+    {
+        list.RemoveAll(p => string.Equals(p, path, StringComparison.OrdinalIgnoreCase));
+        list.Insert(0, path);
+        if (list.Count > MaxRecentEntries)
+        {
+            list.RemoveRange(MaxRecentEntries, list.Count - MaxRecentEntries);
+        }
+
+        SaveRecentLists();
+        RefreshRecentMenu();
+    }
+
+    /// <summary>Rebuilds <c>RecentFlyout</c>'s items from <see cref="_recentFiles"/>/<see cref="_recentFolders"/> - two labeled, separator-divided sections, or a disabled placeholder if both are empty.</summary>
+    private void RefreshRecentMenu()
+    {
+        RecentFlyout.Items.Clear();
+
+        if (_recentFiles.Count == 0 && _recentFolders.Count == 0)
+        {
+            RecentFlyout.Items.Add(new MenuFlyoutItem { Text = "(no recent items)", IsEnabled = false });
+            return;
+        }
+
+        if (_recentFiles.Count > 0)
+        {
+            RecentFlyout.Items.Add(new MenuFlyoutItem { Text = "Recent Files", IsEnabled = false });
+            foreach (var path in _recentFiles)
+            {
+                var item = new MenuFlyoutItem { Text = path, Tag = path };
+                item.Click += RecentFileItem_Click;
+                RecentFlyout.Items.Add(item);
+            }
+        }
+
+        if (_recentFolders.Count > 0)
+        {
+            if (_recentFiles.Count > 0)
+            {
+                RecentFlyout.Items.Add(new MenuFlyoutSeparator());
+            }
+
+            RecentFlyout.Items.Add(new MenuFlyoutItem { Text = "Recent Folders", IsEnabled = false });
+            foreach (var path in _recentFolders)
+            {
+                var item = new MenuFlyoutItem { Text = path, Tag = path };
+                item.Click += RecentFolderItem_Click;
+                RecentFlyout.Items.Add(item);
+            }
+        }
+    }
+
+    /// <summary>Loads the clicked recent file, or prunes it from the list if it no longer exists.</summary>
+    private void RecentFileItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuFlyoutItem { Tag: string path })
         {
             return;
         }
 
-        var path = Path.Combine(samplesDir, "SimplePage.xaml");
         if (File.Exists(path))
         {
             LoadFile(path);
         }
+        else
+        {
+            _recentFiles.Remove(path);
+            SaveRecentLists();
+            RefreshRecentMenu();
+        }
     }
 
-    /// <summary>
-    /// Dev-time convenience only: walks up from the executable's folder looking for the repo
-    /// root (marked by WinUIDesigner.sln) so a sample loads automatically without needing the
-    /// file picker. Real file opening always goes through <see cref="OpenButton_Click"/>.
-    /// </summary>
-    private static string? FindSamplesDirectory()
+    /// <summary>Populates the file tree from the clicked recent folder, or prunes it from the list if it no longer exists.</summary>
+    private void RecentFolderItem_Click(object sender, RoutedEventArgs e)
     {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null)
+        if (sender is not MenuFlyoutItem { Tag: string path })
         {
-            var candidate = Path.Combine(dir.FullName, "samples");
-            if (Directory.Exists(candidate) && File.Exists(Path.Combine(dir.FullName, "WinUIDesigner.sln")))
-            {
-                return candidate;
-            }
-
-            dir = dir.Parent;
+            return;
         }
 
-        return null;
+        if (Directory.Exists(path))
+        {
+            PopulateFileTree(path);
+        }
+        else
+        {
+            _recentFolders.Remove(path);
+            SaveRecentLists();
+            RefreshRecentMenu();
+        }
     }
 
+    /// <summary>Loads a `.xaml` file as the current document, resets undo/redo and dirty-tracking, refreshes the design surface, and adds it to Recent Files. On failure, shows the error in place of the current-file path instead of throwing.</summary>
+    /// <param name="path">Absolute path of the `.xaml` file to load.</param>
     private void LoadFile(string path)
     {
         try
@@ -250,6 +462,7 @@ public sealed partial class MainWindow : Window
             _lastSavedXaml = doc.ToXamlString();
 
             RefreshDesignSurfaceFromDocument();
+            AddRecentFile(path);
         }
         catch (Exception ex)
         {
@@ -302,6 +515,8 @@ public sealed partial class MainWindow : Window
     /// even though it's caught) for no benefit. The second, more aggressive fallback is kept
     /// defensively for control types/attributes we haven't fixture-tested.
     /// </summary>
+    /// <param name="xamlText">The document's current XAML text.</param>
+    /// <returns>The loaded root element and a label naming which sanitizing attempt worked, or a null root and a failure status if every attempt failed.</returns>
     private static (UIElement? root, string status) RenderPreview(string xamlText)
     {
         var attempts = new (string Label, string Xaml)[]
@@ -331,12 +546,15 @@ public sealed partial class MainWindow : Window
         return (null, "all attempts failed");
     }
 
+    /// <summary>Appends a block of text to <see cref="SpikeLogPath"/>, creating its directory if needed.</summary>
+    /// <param name="contents">Text to append, followed by a newline.</param>
     private static void WriteLog(string contents)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(SpikeLogPath)!);
         File.AppendAllText(SpikeLogPath, contents + Environment.NewLine);
     }
 
+    /// <summary>Adds a control of the type named by the clicked toolbox item's <c>Tag</c>.</summary>
     private void ToolboxItem_Click(object sender, RoutedEventArgs e)
     {
         if (sender is FrameworkElement { Tag: string localName })
@@ -351,6 +569,7 @@ public sealed partial class MainWindow : Window
     /// immediately drag it into place. v1 only supports a Canvas root (see
     /// research/00-scope-and-decisions.md), so this doesn't attempt to target nested containers.
     /// </summary>
+    /// <param name="localName">The XAML element name to add, e.g. "Button" (must be one of the types <see cref="ApplyDefaultAttributes"/> knows defaults for).</param>
     private void AddControl(string localName)
     {
         if (_currentDocument is null)
@@ -383,6 +602,9 @@ public sealed partial class MainWindow : Window
         SelectByName(name);
     }
 
+    /// <summary>Sets a handful of sensible default attributes (size, placeholder content, ...) so a freshly-added control isn't invisible or zero-sized on the design surface.</summary>
+    /// <param name="element">The just-added element to set attributes on.</param>
+    /// <param name="localName">The element's XAML type name, e.g. "Button" - selects which defaults apply.</param>
     private static void ApplyDefaultAttributes(DesignElement element, string localName)
     {
         switch (localName)
@@ -418,6 +640,8 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>Finds the next unused "{localName}{N}" name by scanning the whole document, so it stays unique even across files that already name things that way.</summary>
+    /// <param name="localName">The element's XAML type name, e.g. "Button" - used as the name prefix.</param>
+    /// <returns>A name of the form "{localName}{N}" not already used anywhere in the current document.</returns>
     private string GenerateUniqueName(string localName)
     {
         var used = new HashSet<string>();
@@ -432,6 +656,9 @@ public sealed partial class MainWindow : Window
         return $"{localName}{n}";
     }
 
+    /// <summary>Recursively collects every non-empty <see cref="DesignElement.Name"/> in the subtree rooted at <paramref name="element"/>.</summary>
+    /// <param name="element">Subtree root to scan.</param>
+    /// <param name="names">Set to add found names into.</param>
     private static void CollectNames(DesignElement element, HashSet<string> names)
     {
         if (element.Name is { Length: > 0 } name)
@@ -445,6 +672,8 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    /// <summary>Selects the live/design element pair whose design name matches, if one is found in the current live-to-design correlation.</summary>
+    /// <param name="name">The <see cref="DesignElement.Name"/> (x:Name) to select.</param>
     private void SelectByName(string name)
     {
         var entry = _liveToDesign.FirstOrDefault(kvp => kvp.Value.Name == name);
@@ -454,6 +683,7 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    /// <summary>Hit-tests the press point; if it lands on a design element, selects it and begins a move drag, otherwise clears the selection.</summary>
     private void DesignSurfaceHost_PointerPressed(object sender, PointerRoutedEventArgs e)
     {
         // FindElementsInHostCoordinates wants the point in the window root's coordinate
@@ -490,6 +720,7 @@ public sealed partial class MainWindow : Window
         ClearSelection();
     }
 
+    /// <summary>While a move drag is in progress, repositions the dragged element and its adorner to follow the pointer.</summary>
     private void DesignSurfaceHost_PointerMoved(object sender, PointerRoutedEventArgs e)
     {
         if (_moveElement is null)
@@ -507,6 +738,7 @@ public sealed partial class MainWindow : Window
         UpdateAdornerToMatch(_moveElement);
     }
 
+    /// <summary>Ends a move drag: commits the element's final position to the document (undo entry + XAML refresh) and releases pointer capture.</summary>
     private void DesignSurfaceHost_PointerReleased(object sender, PointerRoutedEventArgs e)
     {
         if (_moveElement is not null && _moveDesignElement is not null)
@@ -522,6 +754,7 @@ public sealed partial class MainWindow : Window
         DesignSurfaceHost.ReleasePointerCapture(e.Pointer);
     }
 
+    /// <summary>Begins a resize drag from the pressed handle's <c>Tag</c> direction (e.g. "SE") against the currently selected element.</summary>
     private void ResizeHandle_PointerPressed(object sender, PointerRoutedEventArgs e)
     {
         if (_selectedLiveElement is not FrameworkElement selected || _selectedDesignElement is null)
@@ -545,6 +778,7 @@ public sealed partial class MainWindow : Window
         e.Handled = true;
     }
 
+    /// <summary>While a resize drag is in progress, applies the pointer delta (via <see cref="ApplyResize"/>) to the resizing element and its adorner.</summary>
     private void ResizeHandle_PointerMoved(object sender, PointerRoutedEventArgs e)
     {
         if (_resizeDirection is null || _resizeElement is not FrameworkElement resizing)
@@ -567,6 +801,7 @@ public sealed partial class MainWindow : Window
         UpdateAdornerToMatch(resizing);
     }
 
+    /// <summary>Ends a resize drag: commits the element's final position/size to the document (undo entry + XAML refresh) and releases pointer capture.</summary>
     private void ResizeHandle_PointerReleased(object sender, PointerRoutedEventArgs e)
     {
         if (_resizeElement is FrameworkElement resizing && _resizeDesignElement is not null)
@@ -589,6 +824,14 @@ public sealed partial class MainWindow : Window
     /// Direction is one of the 8 compass points ("NW".."SE"): N/S adjust the top edge and
     /// height, W/E adjust the left edge and width - a handle can combine one of each (e.g. "SE").
     /// </summary>
+    /// <param name="direction">Compass-point drag direction, e.g. "SE" or "N".</param>
+    /// <param name="startLeft">Element's <c>Canvas.Left</c> when the drag began.</param>
+    /// <param name="startTop">Element's <c>Canvas.Top</c> when the drag began.</param>
+    /// <param name="startWidth">Element's width when the drag began.</param>
+    /// <param name="startHeight">Element's height when the drag began.</param>
+    /// <param name="deltaX">Horizontal pointer movement since the drag began.</param>
+    /// <param name="deltaY">Vertical pointer movement since the drag began.</param>
+    /// <returns>The new left/top/width/height, each clamped to at least <see cref="MinElementSize"/>.</returns>
     private static (double Left, double Top, double Width, double Height) ApplyResize(
         string direction, double startLeft, double startTop, double startWidth, double startHeight, double deltaX, double deltaY)
     {
@@ -620,6 +863,9 @@ public sealed partial class MainWindow : Window
         return (left, top, width, height);
     }
 
+    /// <summary>Marks the given element as selected: shows the adorner/handles around it and builds its property grid. A non-<see cref="FrameworkElement"/> hit clears the selection instead, since bounds/property reflection both need one.</summary>
+    /// <param name="liveElement">The live (rendered) visual-tree element that was hit.</param>
+    /// <param name="designElement">The corresponding node in the document's element tree.</param>
     private void Select(UIElement liveElement, DesignElement designElement)
     {
         if (liveElement is not FrameworkElement)
@@ -645,6 +891,7 @@ public sealed partial class MainWindow : Window
         BuildPropertyGrid(designElement);
     }
 
+    /// <summary>Hides the selection adorner/handles and clears the property grid.</summary>
     private void ClearSelection()
     {
         _selectedLiveElement = null;
@@ -697,6 +944,7 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    /// <summary>Removes the currently selected element from the document (undo entry + full design-surface refresh). No-op if nothing is selected.</summary>
     private void DeleteSelectedControl()
     {
         if (_selectedDesignElement is null)
@@ -711,6 +959,7 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>Two-column name/value layout, matching the WPF/WinForms Properties window.</summary>
+    /// <param name="designElement">The selected element whose curated properties (per <see cref="PropertyGridSchema"/>) to show editors for.</param>
     private void BuildPropertyGrid(DesignElement designElement)
     {
         PropertyGridPanel.Children.Clear();
@@ -747,6 +996,10 @@ public sealed partial class MainWindow : Window
         PropertyGridPanel.Children.Add(grid);
     }
 
+    /// <summary>Creates the property grid's editor control for one property - a <see cref="CheckBox"/>, <see cref="ComboBox"/>, or plain <see cref="TextBox"/> depending on the descriptor's kind - wired to call <see cref="ApplyPropertyEdit"/> when its value changes.</summary>
+    /// <param name="designElement">The selected element the property belongs to.</param>
+    /// <param name="descriptor">Describes the property's name and editor kind.</param>
+    /// <returns>The editor control, ready to place in the property grid.</returns>
     private FrameworkElement CreatePropertyEditor(DesignElement designElement, PropertyDescriptor descriptor)
     {
         var currentText = designElement.GetAttribute(descriptor.Name) ?? string.Empty;
@@ -785,6 +1038,15 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// Applies one property-grid edit to both the live element (via reflection, so the design
+    /// surface updates immediately) and the document (as an undo-tracked XAML attribute). Invalid
+    /// input (unparsable number/color/thickness) is a silent no-op, leaving the live value and
+    /// the field's own text as typed rather than reverting or throwing.
+    /// </summary>
+    /// <param name="designElement">The selected element whose attribute to update.</param>
+    /// <param name="descriptor">Describes the property's name and value kind (number, bool, enum, brush, thickness, or plain text).</param>
+    /// <param name="rawText">The editor's current text/value, as typed or selected.</param>
     private void ApplyPropertyEdit(DesignElement designElement, PropertyDescriptor descriptor, string rawText)
     {
         if (_selectedLiveElement is null)
@@ -882,6 +1144,8 @@ public sealed partial class MainWindow : Window
         UpdateAdornerToMatch(_selectedLiveElement);
     }
 
+    /// <summary>Shows or hides all 8 resize handles together.</summary>
+    /// <param name="visibility">Visibility to apply to every handle.</param>
     private void SetHandlesVisibility(Visibility visibility)
     {
         HandleNW.Visibility = visibility;
@@ -895,6 +1159,7 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>Repositions the selection rectangle, label, and resize handles to match the given live element's current bounds.</summary>
+    /// <param name="liveElement">The selected live element to measure and follow.</param>
     private void UpdateAdornerToMatch(UIElement liveElement)
     {
         if (liveElement is not FrameworkElement frameworkElement)
@@ -924,26 +1189,40 @@ public sealed partial class MainWindow : Window
         PositionHandle(HandleSE, bounds.Right - half, bounds.Bottom - half);
     }
 
+    /// <summary>Positions one resize handle on the adorner canvas.</summary>
+    /// <param name="handle">The handle to position.</param>
+    /// <param name="x">Target <c>Canvas.Left</c>.</param>
+    /// <param name="y">Target <c>Canvas.Top</c>.</param>
     private static void PositionHandle(FrameworkElement handle, double x, double y)
     {
         Canvas.SetLeft(handle, x);
         Canvas.SetTop(handle, y);
     }
 
+    /// <summary>Reads <c>Canvas.Left</c>, treating the WinUI default of <see cref="double.NaN"/> (attached property never set) as 0.</summary>
+    /// <param name="element">Element to read the attached property from.</param>
+    /// <returns>The element's <c>Canvas.Left</c>, or 0 if unset.</returns>
     private static double GetCanvasLeft(UIElement element)
     {
         var value = Canvas.GetLeft(element);
         return double.IsNaN(value) ? 0 : value;
     }
 
+    /// <summary>Reads <c>Canvas.Top</c>, treating the WinUI default of <see cref="double.NaN"/> (attached property never set) as 0.</summary>
+    /// <param name="element">Element to read the attached property from.</param>
+    /// <returns>The element's <c>Canvas.Top</c>, or 0 if unset.</returns>
     private static double GetCanvasTop(UIElement element)
     {
         var value = Canvas.GetTop(element);
         return double.IsNaN(value) ? 0 : value;
     }
 
+    /// <summary>Formats a length value for a XAML attribute: rounded to 2 decimal places, culture-invariant.</summary>
+    /// <param name="value">The length to format.</param>
+    /// <returns>The formatted string, e.g. "123.46".</returns>
     private static string FormatLength(double value) => Math.Round(value, 2).ToString(CultureInfo.InvariantCulture);
 
+    /// <summary>Re-renders just the XAML source pane from the current document, without touching the design surface.</summary>
     private void RefreshXamlSourceView()
     {
         if (_currentDocument is not null)
@@ -980,6 +1259,7 @@ public sealed partial class MainWindow : Window
         _pendingUndoSnapshot = null;
     }
 
+    /// <summary>Restores the document to the top of the undo stack, pushing the current state onto redo first.</summary>
     private void Undo()
     {
         if (_undoStack.Count == 0 || _currentDocument is null)
@@ -992,6 +1272,7 @@ public sealed partial class MainWindow : Window
         RefreshDesignSurfaceFromDocument();
     }
 
+    /// <summary>Restores the document to the top of the redo stack, pushing the current state onto undo first.</summary>
     private void Redo()
     {
         if (_redoStack.Count == 0 || _currentDocument is null)
@@ -1010,6 +1291,7 @@ public sealed partial class MainWindow : Window
     /// is appended near the end) can look like "nothing happened" even though the text really
     /// did update. Moving the caret to the end scrolls it into view.
     /// </summary>
+    /// <param name="text">The XAML text to display.</param>
     private void SetXamlSourceText(string text)
     {
         XamlSourceView.Text = text;
@@ -1025,12 +1307,13 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>Drag-resizes a column by attaching pointer handlers directly to a splitter element - there's no built-in GridSplitter in the WinUI SDK.</summary>
+    /// <param name="splitter">The draggable splitter element (a <see cref="SplitterThumb"/> in practice, for its hover cursor - see <see cref="CursorGrid"/>).</param>
+    /// <param name="column">The column whose <see cref="ColumnDefinition.Width"/> the drag adjusts.</param>
+    /// <param name="minWidth">Minimum width the drag can shrink <paramref name="column"/> to.</param>
+    /// <param name="maxWidth">Maximum width the drag can grow <paramref name="column"/> to.</param>
+    /// <param name="onDragCompleted">Invoked once when a drag ends (pointer released or capture lost), e.g. to persist the new layout.</param>
     private void AttachColumnSplitter(FrameworkElement splitter, ColumnDefinition column, double minWidth, double maxWidth, Action onDragCompleted)
     {
-        // Note: a resize-cursor-on-hover would be nice here (WPF/VS-style) but
-        // UIElement/FrameworkElement.ChangeCursor isn't available on the WindowsAppSDK 2.3.1
-        // we're pinned to (see research/13-splitter-direction-cursor-undo.md) - revisit if the
-        // SDK version is ever bumped.
         var dragging = false;
         var lastX = 0.0;
 
@@ -1079,6 +1362,12 @@ public sealed partial class MainWindow : Window
     /// below it in layout terms - see research/13-splitter-direction-cursor-undo.md for why this
     /// is needed for the design-surface/XAML-source splitter specifically but not the others.
     /// </summary>
+    /// <param name="splitter">The draggable splitter element.</param>
+    /// <param name="row">The row whose <see cref="RowDefinition.Height"/> the drag adjusts.</param>
+    /// <param name="minHeight">Minimum height the drag can shrink <paramref name="row"/> to.</param>
+    /// <param name="maxHeight">Maximum height the drag can grow <paramref name="row"/> to.</param>
+    /// <param name="onDragCompleted">Invoked once when a drag ends (pointer released or capture lost), e.g. to persist the new layout.</param>
+    /// <param name="invert">True if <paramref name="row"/> lies after (below) <paramref name="splitter"/> in the layout, so the drag-delta sign needs flipping.</param>
     private void AttachRowSplitter(FrameworkElement splitter, RowDefinition row, double minHeight, double maxHeight, Action onDragCompleted, bool invert = false)
     {
         var dragging = false;
@@ -1120,8 +1409,13 @@ public sealed partial class MainWindow : Window
         splitter.PointerCaptureLost += EndDrag;
     }
 
+    /// <summary>On-disk shape of <see cref="LayoutConfigPath"/>.</summary>
+    /// <param name="ToolboxWidth">Width of the toolbox column.</param>
+    /// <param name="FilePanelHeight">Height of the file-browser panel row.</param>
+    /// <param name="XamlSourceHeight">Height of the XAML source pane row.</param>
     private sealed record PanelLayout(double ToolboxWidth, double FilePanelHeight, double XamlSourceHeight);
 
+    /// <summary>Restores panel sizes from <see cref="LayoutConfigPath"/>, leaving the XAML-declared defaults in place if the file is missing or unreadable.</summary>
     private void LoadPanelLayout()
     {
         try
@@ -1147,6 +1441,7 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    /// <summary>Persists current panel sizes to <see cref="LayoutConfigPath"/>. Best-effort - a write failure is swallowed.</summary>
     private void SavePanelLayout()
     {
         try
@@ -1161,6 +1456,9 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    /// <summary>Renders <paramref name="element"/> to a PNG file - used to keep a debug preview snapshot of the design surface on disk.</summary>
+    /// <param name="element">The element to render.</param>
+    /// <param name="path">Destination PNG file path; overwritten if it already exists.</param>
     private static async Task SaveSnapshotAsync(FrameworkElement element, string path)
     {
         var rtb = new RenderTargetBitmap();
