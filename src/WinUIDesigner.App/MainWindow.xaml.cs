@@ -783,15 +783,27 @@ public sealed partial class MainWindow : Window
         UpdateAdornerToMatch(_moveElement);
     }
 
-    /// <summary>Ends a move drag: commits the element's final position to the document (undo entry + XAML refresh) and releases pointer capture.</summary>
+    /// <summary>Ends a move drag: commits the element's final position to the document (undo entry + XAML refresh) and releases pointer capture. A no-op if nothing actually moved (a plain click without dragging).</summary>
     private void DesignSurfaceHost_PointerReleased(object sender, PointerRoutedEventArgs e)
     {
         if (_moveElement is not null && _moveDesignElement is not null)
         {
-            _moveDesignElement.SetAttribute("Canvas.Left", FormatLength(GetCanvasLeft(_moveElement)));
-            _moveDesignElement.SetAttribute("Canvas.Top", FormatLength(GetCanvasTop(_moveElement)));
-            CommitUndoableChange();
-            RefreshXamlSourceView();
+            var newLeft = GetCanvasLeft(_moveElement);
+            var newTop = GetCanvasTop(_moveElement);
+
+            // A plain click-to-select (press+release with no drag in between) still sets up
+            // _moveElement in PointerPressed, so without this check every single click would
+            // count as a "move to the same position" - pushing a no-op undo entry and, worse,
+            // refreshing the XAML source view, which resets its caret to the end of the text
+            // (see SetXamlSourceText) and - via the source->design caret sync (#25) - re-selects
+            // whatever element that happens to land on, undoing the click's own selection.
+            if (newLeft != _moveStartLeft || newTop != _moveStartTop)
+            {
+                _moveDesignElement.SetAttribute("Canvas.Left", FormatLength(newLeft));
+                _moveDesignElement.SetAttribute("Canvas.Top", FormatLength(newTop));
+                CommitUndoableChange();
+                RefreshXamlSourceView();
+            }
         }
 
         _moveElement = null;
@@ -846,10 +858,12 @@ public sealed partial class MainWindow : Window
         UpdateAdornerToMatch(resizing);
     }
 
-    /// <summary>Ends a resize drag: commits the element's final position/size to the document (undo entry + XAML refresh) and releases pointer capture.</summary>
+    /// <summary>Ends a resize drag: commits the element's final position/size to the document (undo entry + XAML refresh) and releases pointer capture. A no-op if nothing actually changed (a press+release on a handle with no drag in between).</summary>
     private void ResizeHandle_PointerReleased(object sender, PointerRoutedEventArgs e)
     {
-        if (_resizeElement is FrameworkElement resizing && _resizeDesignElement is not null)
+        if (_resizeElement is FrameworkElement resizing && _resizeDesignElement is not null
+            && (GetCanvasLeft(resizing) != _resizeStartLeft || GetCanvasTop(resizing) != _resizeStartTop
+                || resizing.Width != _resizeStartWidth || resizing.Height != _resizeStartHeight))
         {
             _resizeDesignElement.SetAttribute("Canvas.Left", FormatLength(GetCanvasLeft(resizing)));
             _resizeDesignElement.SetAttribute("Canvas.Top", FormatLength(GetCanvasTop(resizing)));
@@ -1308,7 +1322,13 @@ public sealed partial class MainWindow : Window
     /// <param name="designElement">The now-selected element to locate.</param>
     private void MoveXamlSourceCaretTo(DesignElement designElement)
     {
-        if (_currentDocument is null)
+        // While XamlSourceView_SelectionChanged is driving the selection (the user just placed
+        // the caret themselves), snapping it back to the element's tag start here would fight
+        // their own caret placement - e.g. clicking in the whitespace gap between two elements
+        // would immediately jump the caret back to the preceding element's tag, making it
+        // impossible to ever place the caret *between* elements. The reverse direction (clicking
+        // on the design surface) still wants this - that's the whole point of #22.
+        if (_currentDocument is null || _syncingSelectionFromSource)
         {
             return;
         }
@@ -1399,7 +1419,15 @@ public sealed partial class MainWindow : Window
             var entry = _liveToDesign.FirstOrDefault(kvp => ReferenceEquals(kvp.Value.Element, actualElement));
             if (entry.Key is not null)
             {
-                Select(entry.Key, entry.Value);
+                _syncingSelectionFromSource = true;
+                try
+                {
+                    Select(entry.Key, entry.Value);
+                }
+                finally
+                {
+                    _syncingSelectionFromSource = false;
+                }
             }
         }
         catch (Exception ex)
@@ -1570,6 +1598,9 @@ public sealed partial class MainWindow : Window
     }
 
     private XamlPaneTab _xamlPaneTab = XamlPaneTab.Source;
+
+    /// <summary>True while <see cref="XamlSourceView_SelectionChanged"/> is driving a selection from a user-placed caret - tells <see cref="MoveXamlSourceCaretTo"/> not to fight back and reposition that same caret.</summary>
+    private bool _syncingSelectionFromSource;
 
     /// <summary>Collapses '\r\n' and lone '\r' to '\n', so text that only differs by line-ending style compares as equal.</summary>
     /// <param name="text">Text to normalize.</param>
