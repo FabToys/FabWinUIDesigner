@@ -132,6 +132,8 @@
                     TextWrapping="NoWrap"
                     FontFamily="Consolas"
                     Margin="8"
+                    IsSpellCheckEnabled="False"
+                    IsTextPredictionEnabled="False"
                     LostFocus="XamlSourceView_LostFocus"
                     ScrollViewer.HorizontalScrollBarVisibility="Auto"
                     ScrollViewer.VerticalScrollBarVisibility="Auto" />

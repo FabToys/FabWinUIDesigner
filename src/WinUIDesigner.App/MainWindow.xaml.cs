@@ -9,6 +9,8 @@ using System.Globalization;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text;
 using System.Text.Json;
+using System.Xml;
+using System.Xml.Linq;
 using Windows.Foundation;
 using Windows.Graphics.Imaging;
 using Windows.Storage;
@@ -551,6 +553,12 @@ public sealed partial class MainWindow : Window
         var log = new StringBuilder();
         log.AppendLine($"Spike run at {DateTimeOffset.Now:O}");
 
+        // Kept from the last attempt so a total failure can report *why* (e.g. "The property
+        // 'Texte' was not found in type 'TextBlock'") instead of a generic "all attempts
+        // failed" - both the design-surface fallback text and TryApplyXamlSourceEdit's inline
+        // error use this.
+        string? lastErrorMessage = null;
+
         foreach (var (label, candidateXaml) in attempts)
         {
             var result = XamlPreviewLoader.TryLoad(candidateXaml);
@@ -563,10 +571,12 @@ public sealed partial class MainWindow : Window
                 WriteLog(log.ToString());
                 return (result.Root, label);
             }
+
+            lastErrorMessage = result.Error?.Message;
         }
 
         WriteLog(log.ToString());
-        return (null, "all attempts failed");
+        return (null, lastErrorMessage ?? "all attempts failed");
     }
 
     /// <summary>Appends a block of text to <see cref="SpikeLogPath"/>, creating its directory if needed.</summary>
@@ -919,6 +929,7 @@ public sealed partial class MainWindow : Window
 
         UpdateAdornerToMatch(liveElement);
         BuildPropertyGrid(designElement);
+        MoveXamlSourceCaretTo(designElement);
     }
 
     /// <summary>Hides the selection adorner/handles and clears the property grid.</summary>
@@ -1077,7 +1088,9 @@ public sealed partial class MainWindow : Window
 
             default:
             {
-                var textBox = new TextBox { Text = currentText };
+                // IsSpellCheckEnabled=false: property values (colors, numbers, short content
+                // strings) aren't prose, so the spell-checker's red squiggles are just noise here.
+                var textBox = new TextBox { Text = currentText, IsSpellCheckEnabled = false };
                 textBox.LostFocus += (_, _) => ApplyPropertyEdit(designElement, descriptor, textBox.Text);
                 return textBox;
             }
@@ -1272,6 +1285,87 @@ public sealed partial class MainWindow : Window
     /// <returns>The formatted string, e.g. "123.46".</returns>
     private static string FormatLength(double value) => Math.Round(value, 2).ToString(CultureInfo.InvariantCulture);
 
+    /// <summary>
+    /// Moves the XAML source view's caret to the start of the given element's tag, so selecting
+    /// something on the design surface scrolls the source view to it too. Recomputed from a
+    /// fresh, line-info-annotated reparse of the document's own current serialized text on every
+    /// call, rather than relying on line info the original <see cref="XElement"/> may never have
+    /// had (e.g. one created via <see cref="AddControl"/> rather than parsed from text has none)
+    /// - <see cref="XamlDocument.ToXamlString"/> always reflects the live tree, and a fresh
+    /// reparse of exactly that text is always structurally identical to it, so matching by
+    /// document-order position (not by object reference, which wouldn't survive the reparse)
+    /// works reliably.
+    /// </summary>
+    /// <param name="designElement">The now-selected element to locate.</param>
+    private void MoveXamlSourceCaretTo(DesignElement designElement)
+    {
+        if (_currentDocument is null)
+        {
+            return;
+        }
+
+        var index = DocumentOrderIndex(_currentDocument.Root.Element, designElement.Element);
+        if (index < 0)
+        {
+            return;
+        }
+
+        var text = _currentDocument.ToXamlString();
+        var reparsed = XDocument.Parse(text, LoadOptions.SetLineInfo);
+        var target = reparsed.Root?.DescendantsAndSelf().ElementAtOrDefault(index);
+        if (target is not IXmlLineInfo lineInfo || !lineInfo.HasLineInfo())
+        {
+            return;
+        }
+
+        XamlSourceView.SelectionStart = OffsetOf(text, lineInfo.LineNumber, lineInfo.LinePosition);
+        XamlSourceView.SelectionLength = 0;
+    }
+
+    /// <summary>Finds <paramref name="target"/>'s zero-based position in <paramref name="root"/>'s pre-order (document-order) element sequence - root itself is position 0.</summary>
+    /// <param name="root">Root to search from.</param>
+    /// <param name="target">Element to find (by reference).</param>
+    /// <returns>The zero-based index, or -1 if not found.</returns>
+    private static int DocumentOrderIndex(XElement root, XElement target)
+    {
+        var index = 0;
+        foreach (var element in root.DescendantsAndSelf())
+        {
+            if (ReferenceEquals(element, target))
+            {
+                return index;
+            }
+
+            index++;
+        }
+
+        return -1;
+    }
+
+    /// <summary>Converts a 1-based (line, column) position, as reported by <see cref="IXmlLineInfo"/>, to a 0-based character offset into <paramref name="text"/>.</summary>
+    /// <param name="text">The text the position is within.</param>
+    /// <param name="line">1-based line number.</param>
+    /// <param name="column">1-based column number.</param>
+    /// <returns>The matching 0-based character offset, clamped to <paramref name="text"/>'s length.</returns>
+    private static int OffsetOf(string text, int line, int column)
+    {
+        var offset = 0;
+        var currentLine = 1;
+        while (currentLine < line)
+        {
+            var newlineIndex = text.IndexOf('\n', offset);
+            if (newlineIndex < 0)
+            {
+                return text.Length;
+            }
+
+            offset = newlineIndex + 1;
+            currentLine++;
+        }
+
+        return Math.Min(text.Length, offset + column - 1);
+    }
+
     /// <summary>Re-renders just the XAML source pane from the current document, without touching the design surface.</summary>
     private void RefreshXamlSourceView()
     {
@@ -1288,11 +1382,14 @@ public sealed partial class MainWindow : Window
     /// If the XAML source view's text differs from the current document, tries to re-parse it
     /// and, on success, swaps it in as the current document through the same undo-tracked
     /// pipeline every other edit (move, resize, property edit, ...) goes through - not a
-    /// separate code path - then does a full design-surface reload. On a parse failure, shows
-    /// an inline error and leaves both the typed text and the in-memory document untouched, so
-    /// a mid-edit typo never crashes the app or silently discards what was typed.
+    /// separate code path - then does a full design-surface reload. On failure (either
+    /// malformed XML, or well-formed XML that XamlReader can't actually load - e.g. a typo'd
+    /// property name like "Texte" instead of "Text", which parses fine as XML but doesn't exist
+    /// on the control), shows an inline error and leaves both the typed text and the in-memory
+    /// document untouched, so a mid-edit mistake never crashes the app, corrupts the current
+    /// document, or silently discards what was typed.
     /// </summary>
-    /// <returns>True if there was nothing to commit, or the commit succeeded; false if the typed text is invalid XAML (an error is now showing).</returns>
+    /// <returns>True if there was nothing to commit, or the commit succeeded; false if the typed text is invalid (an error is now showing).</returns>
     private bool TryApplyXamlSourceEdit()
     {
         if (_currentDocument is null)
@@ -1315,6 +1412,18 @@ public sealed partial class MainWindow : Window
         catch (Exception ex)
         {
             SetXamlSourceError($"XAML error: {ex.Message}");
+            return false;
+        }
+
+        // Well-formed XML isn't the same as valid WinUI XAML - check it actually loads before
+        // committing it as the current document. Without this, a typo like "Texte" would parse
+        // fine, get committed, and only then fail inside RefreshDesignSurfaceFromDocument, at
+        // which point the design surface just shows its generic "preview failed" fallback with
+        // no way back to the edit except Undo - not the inline, in-place error this pane is for.
+        var (root, status) = RenderPreview(parsed.ToXamlString());
+        if (root is null)
+        {
+            SetXamlSourceError($"XAML error: {status}");
             return false;
         }
 
