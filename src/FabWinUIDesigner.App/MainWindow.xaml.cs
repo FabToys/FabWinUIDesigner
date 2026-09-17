@@ -21,6 +21,7 @@ using Windows.Storage.Pickers;
 using Windows.System;
 using Windows.UI;
 using Windows.UI.Core;
+using FabWinUIDesigner.CodeGen;
 using FabWinUIDesigner.Core;
 using DesignElement = FabWinUIDesigner.Document.DesignElement;
 using XamlDocument = FabWinUIDesigner.Document.XamlDocument;
@@ -1187,6 +1188,62 @@ public sealed partial class MainWindow : Window
         }
 
         PropertyGridPanel.Children.Add(grid);
+        BuildEventsSection(designElement);
+    }
+
+    /// <summary>
+    /// Appends an "Events" sub-section to the property grid (M7 - research/43) for whichever
+    /// common events this element's type has (<see cref="EventGridSchema"/>) - a no-op for a
+    /// type with none, e.g. <c>TextBlock</c>. Laid out the same two-column way as the properties
+    /// grid above it, just with its own small header so the two read as distinct groups within
+    /// the single scrollable <c>PropertyGridPanel</c>.
+    /// </summary>
+    /// <param name="designElement">The selected element to show events for.</param>
+    private void BuildEventsSection(DesignElement designElement)
+    {
+        var descriptors = EventGridSchema.GetEvents(designElement.LocalName);
+        if (descriptors.Count == 0)
+        {
+            return;
+        }
+
+        PropertyGridPanel.Children.Add(new TextBlock
+        {
+            Text = "Events",
+            FontWeight = FontWeights.Bold,
+            FontSize = 12,
+            Margin = new Thickness(0, 6, 0, 2),
+        });
+
+        var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(90) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        for (var row = 0; row < descriptors.Count; row++)
+        {
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+            var descriptor = descriptors[row];
+
+            var label = new TextBlock
+            {
+                Text = descriptor.Name,
+                FontSize = 12,
+                Margin = new Thickness(0, 0, 6, 6),
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            Grid.SetRow(label, row);
+            Grid.SetColumn(label, 0);
+            grid.Children.Add(label);
+
+            var editor = CreateEventEditor(designElement, descriptor);
+            editor.Margin = new Thickness(0, 0, 0, 6);
+            Grid.SetRow(editor, row);
+            Grid.SetColumn(editor, 1);
+            grid.Children.Add(editor);
+        }
+
+        PropertyGridPanel.Children.Add(grid);
     }
 
     /// <summary>Creates the property grid's editor control for one property - a <see cref="CheckBox"/>, <see cref="ComboBox"/>, or plain <see cref="TextBox"/> depending on the descriptor's kind - wired to call <see cref="ApplyPropertyEdit"/> when its value changes.</summary>
@@ -1340,6 +1397,103 @@ public sealed partial class MainWindow : Window
         CommitUndoableChange();
         RefreshXamlSourceView();
         UpdateAdornerToMatch(_selectedLiveElement);
+    }
+
+    /// <summary>Creates the Events section's editor for one event - always a plain <see cref="TextBox"/> for the handler method name (M7 - research/43), wired to call <see cref="ApplyEventEdit"/> when it loses focus.</summary>
+    /// <param name="designElement">The selected element the event belongs to.</param>
+    /// <param name="descriptor">Describes the event's name.</param>
+    /// <returns>The editor control, ready to place in the Events section.</returns>
+    private FrameworkElement CreateEventEditor(DesignElement designElement, EventDescriptor descriptor)
+    {
+        var currentText = designElement.GetAttribute(descriptor.Name) ?? string.Empty;
+        var textBox = new TextBox { Text = currentText, IsSpellCheckEnabled = false };
+        textBox.LostFocus += (_, _) => ApplyEventEdit(designElement, descriptor, textBox.Text);
+        return textBox;
+    }
+
+    /// <summary>
+    /// Applies one event-grid edit: sets (or, for empty text, removes) the XAML event attribute
+    /// through the same undo-tracked pipeline every other edit goes through, then - unlike a
+    /// property edit - also makes sure a matching stub method exists in the document's paired
+    /// `.xaml.cs` file (<see cref="EnsureEventHandlerStub"/>). Deliberately does not set anything
+    /// on the live design-surface element: wiring a real delegate there would make the control
+    /// actually fire application logic while you're just designing it, not previewing it.
+    /// </summary>
+    /// <param name="designElement">The selected element whose event attribute to update.</param>
+    /// <param name="descriptor">Describes the event's name.</param>
+    /// <param name="rawText">The editor's current text - a handler method name, or empty to unwire.</param>
+    private void ApplyEventEdit(DesignElement designElement, EventDescriptor descriptor, string rawText)
+    {
+        var handlerName = rawText.Trim();
+        if (handlerName.Length > 0 && !IsValidIdentifier(handlerName))
+        {
+            return; // invalid input - leave the field as typed, don't apply (same pattern as ApplyPropertyEdit)
+        }
+
+        BeginUndoableChange();
+        designElement.SetAttribute(descriptor.Name, handlerName.Length == 0 ? null : handlerName);
+        CommitUndoableChange();
+        RefreshXamlSourceView();
+
+        if (handlerName.Length > 0)
+        {
+            EnsureEventHandlerStub(descriptor.Name, handlerName);
+        }
+    }
+
+    /// <summary>True for a string that's a valid, unqualified C# identifier - good enough for a generated method name without pulling in a full C# lexer for it.</summary>
+    /// <param name="text">Candidate handler method name.</param>
+    private static bool IsValidIdentifier(string text) => Regex.IsMatch(text, @"^[A-Za-z_][A-Za-z0-9_]*$");
+
+    /// <summary>
+    /// After <see cref="ApplyEventEdit"/> commits a handler name to the XAML, makes sure a
+    /// matching stub method exists in the document's paired `.xaml.cs` file
+    /// (<see cref="EventHandlerCodeGen"/> - M7, research/43-m7-event-codegen-plan.md). Quietly
+    /// does nothing if the document has no file path yet (a brand-new unsaved document - nothing
+    /// to derive a `.xaml.cs` path from) or no `x:Class` (hand-authored XAML with no code-behind
+    /// class to generate into) - both are legitimate states, not errors: the XAML attribute is
+    /// still set either way, this only covers the code-behind stub.
+    /// </summary>
+    /// <param name="eventName">The XAML event name, e.g. "Click" - used to reflect the live control's real delegate signature.</param>
+    /// <param name="methodName">The handler method name just committed to the XAML attribute.</param>
+    private void EnsureEventHandlerStub(string eventName, string methodName)
+    {
+        if (_currentFilePath is null || _currentDocument is null || _selectedLiveElement is null)
+        {
+            return;
+        }
+
+        var className = _currentDocument.Root.GetAttribute(FabWinUIDesigner.Document.XamlNamespaces.X + "Class");
+        if (className is null)
+        {
+            return;
+        }
+
+        // Reflects the same way FindUnknownPropertyErrors does - the real delegate's parameter
+        // types are the source of truth for the stub's signature, not a hardcoded per-event
+        // table (EventHandlerCodeGen itself stays WinUI-agnostic - see its own doc comment).
+        var eventInfo = _selectedLiveElement.GetType().GetEvent(eventName);
+        var invokeParameters = eventInfo?.EventHandlerType?.GetMethod("Invoke")?.GetParameters();
+        if (invokeParameters is not { Length: 2 })
+        {
+            return; // not a (sender, args)-shaped event - outside this MVP's stub generator
+        }
+
+        var stub = new EventHandlerStub(eventName, methodName, invokeParameters[0].ParameterType.FullName!, invokeParameters[1].ParameterType.FullName!);
+        var codeBehindPath = _currentFilePath + ".cs";
+
+        try
+        {
+            var existingSource = File.Exists(codeBehindPath) ? File.ReadAllText(codeBehindPath) : null;
+            var updated = EventHandlerCodeGen.EnsureEventHandlers(existingSource, className, [stub]);
+            File.WriteAllText(codeBehindPath, updated);
+        }
+        catch (Exception ex)
+        {
+            // Best-effort - a codegen hiccup must never crash the designer or undo the XAML edit
+            // that already committed successfully above.
+            WriteLog($"EnsureEventHandlerStub failed: {ex}");
+        }
     }
 
     /// <summary>Shows or hides all 8 resize handles together.</summary>
