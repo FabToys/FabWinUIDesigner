@@ -1384,13 +1384,13 @@ public sealed partial class MainWindow : Window
         try
         {
             var text = _currentDocument.ToXamlString();
-            if (NormalizeLineEndings(GetSourceText()) != NormalizeLineEndings(text))
+            if (NormalizeLineEndings(XamlSourceView.Text) != NormalizeLineEndings(text))
             {
                 return;
             }
 
             var reparsed = XDocument.Parse(text, LoadOptions.SetLineInfo);
-            var index = EnclosingElementIndex(reparsed, text, GetSourceSelectionStart());
+            var index = EnclosingElementIndex(reparsed, text, XamlSourceView.SelectionStart);
             if (index < 0)
             {
                 return;
@@ -1489,109 +1489,6 @@ public sealed partial class MainWindow : Window
     private void XamlSourceView_LostFocus(object sender, RoutedEventArgs e) => TryApplyXamlSourceEdit();
 
     /// <summary>
-    /// Re-colors <see cref="XamlSourceView"/>'s own text in place - runs on every keystroke (not
-    /// just on commit, unlike the document-mutating logic elsewhere in this file), since this is
-    /// purely cosmetic and has nothing to do with the actual document/undo/validation pipeline.
-    /// <c>TextChanged</c> fires for programmatic text assignment too, but <see cref="SetSourceText"/>
-    /// also calls <see cref="ApplySyntaxColoring"/> directly rather than relying on that alone -
-    /// belt-and-braces, since whether <c>Document.SetText</c> reliably raises it wasn't checked.
-    /// </summary>
-    private void XamlSourceView_TextChanged(object sender, RoutedEventArgs e) => ApplySyntaxColoring();
-
-    /// <summary>Matches, as one span each: an opening/closing tag's "&lt;"/"&lt;/" plus its name, a plain attribute name immediately followed by ="..., a "..." quoted attribute value, or a tag-closing "&gt;"/"/&gt;". Anything else (whitespace, "=", ...) is left unstyled. Deliberately simple - a regex scan, not a real XML parser; matches this app's own serializer output well enough (see research/35-syntax-coloring-deep-plan.md), not arbitrary XAML.</summary>
-    private static readonly Regex XamlTokenPattern = new(
-        """(?<tag></?[A-Za-z_][\w:.]*)|(?<attr>[A-Za-z_][\w:.]*)(?=\s*=\s*")|(?<value>"[^"]*")|(?<close>/?>)""",
-        RegexOptions.Compiled);
-
-    private static readonly Color XamlDefaultColor = Colors.Black;
-    private static readonly Color XamlTagColor = Color.FromArgb(255, 0xA3, 0x15, 0x15);
-    private static readonly Color XamlAttributeColor = Color.FromArgb(255, 0xFF, 0x00, 0x00);
-    private static readonly Color XamlValueColor = Color.FromArgb(255, 0x00, 0x00, 0xFF);
-
-    /// <summary>
-    /// Colors <see cref="XamlSourceView"/>'s current text in place, via <c>Document.GetRange</c> +
-    /// <c>CharacterFormat.ForegroundColor</c> on each matched span (see <see cref="XamlTokenPattern"/>)
-    /// - this changes character *formatting*, not content, so it doesn't move the caret or disturb
-    /// the current selection the way replacing the text would. Resets the whole document to the
-    /// default color first, then colors just the spans recognized - simplest correct way to also
-    /// un-color anything that no longer matches (e.g. a deleted quote mark).
-    /// </summary>
-    private void ApplySyntaxColoring()
-    {
-        try
-        {
-            dynamic document = XamlSourceView.Document;
-            var text = GetSourceText();
-
-            dynamic fullRange = document.GetRange(0, text.Length);
-            fullRange.CharacterFormat.ForegroundColor = XamlDefaultColor;
-
-            foreach (Match match in XamlTokenPattern.Matches(text))
-            {
-                var color = match.Groups["tag"].Success ? XamlTagColor
-                    : match.Groups["attr"].Success ? XamlAttributeColor
-                    : match.Groups["value"].Success ? (Color?)XamlValueColor
-                    : null; // "close" (">"/"/>") and anything unmatched stays the default color
-
-                if (color is null)
-                {
-                    continue;
-                }
-
-                dynamic range = document.GetRange(match.Index, match.Index + match.Length);
-                range.CharacterFormat.ForegroundColor = color.Value;
-            }
-        }
-        catch (Exception ex)
-        {
-            // Best-effort - a coloring hiccup must never disrupt normal typing/editing.
-            WriteLog($"ApplySyntaxColoring failed: {ex}");
-        }
-    }
-
-    /// <summary>
-    /// Reads <see cref="XamlSourceView"/>'s current text via its <c>Document</c> (a
-    /// <c>Microsoft.UI.Text.ITextDocument</c> - accessed via <see langword="dynamic"/> since that
-    /// interface is non-public in this project's pinned SDK, see
-    /// research/35-syntax-coloring-deep-plan.md). Strips the single trailing '\r' RichEdit
-    /// documents always end with (their own implicit final paragraph mark, not real content -
-    /// a known RichEditBox quirk, not specific to this app).
-    /// </summary>
-    /// <returns>The document's current plain text.</returns>
-    private string GetSourceText()
-    {
-        dynamic document = XamlSourceView.Document;
-        document.GetText(0 /* TextGetOptions.None */, out string text);
-        return text.EndsWith('\r') ? text[..^1] : text;
-    }
-
-    /// <summary>Replaces <see cref="XamlSourceView"/>'s entire text via its <c>Document</c> (see <see cref="GetSourceText"/> for why <see langword="dynamic"/>), then re-applies syntax coloring directly - not relying solely on <c>TextChanged</c> firing for a programmatic change.</summary>
-    /// <param name="text">The new text.</param>
-    private void SetSourceText(string text)
-    {
-        dynamic document = XamlSourceView.Document;
-        document.SetText(0 /* TextSetOptions.None */, text);
-        ApplySyntaxColoring();
-    }
-
-    /// <summary>Reads <see cref="XamlSourceView"/>'s current caret position (or the start of its selection, if there is one) via its <c>Document</c> (see <see cref="GetSourceText"/> for why <see langword="dynamic"/>).</summary>
-    /// <returns>The 0-based character offset of the caret/selection start.</returns>
-    private int GetSourceSelectionStart()
-    {
-        dynamic document = XamlSourceView.Document;
-        return (int)document.Selection.StartPosition;
-    }
-
-    /// <summary>Moves <see cref="XamlSourceView"/>'s caret/selection via its <c>Document</c> (see <see cref="GetSourceText"/> for why <see langword="dynamic"/>).</summary>
-    /// <param name="start">0-based character offset to move the selection/caret start to.</param>
-    /// <param name="length">Selection length; 0 for a plain caret move with nothing selected.</param>
-    private void SetSourceSelection(int start, int length)
-    {
-        dynamic document = XamlSourceView.Document;
-        document.Selection.SetRange(start, start + length);
-    }
-
-    /// <summary>
     /// Reformats the current document's XAML with consistent indentation
     /// (<see cref="XamlDocument.ToFormattedXamlString"/>) and commits it through the exact same
     /// pipeline any other source edit goes through - not a separate code path, so it's
@@ -1611,7 +1508,7 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        SetSourceText(_currentDocument.ToFormattedXamlString());
+        XamlSourceView.Text = _currentDocument.ToFormattedXamlString();
         TryApplyXamlSourceEdit();
     }
 
@@ -1634,13 +1531,12 @@ public sealed partial class MainWindow : Window
             return true;
         }
 
-        // RichEditBox's Document (like TextBox's .Text before it - see research/24) uses '\r'
-        // as its internal line separator, so reading the text back can legitimately differ from
-        // ToXamlString()'s '\r\n' (or whatever the source file used) even when the user hasn't
-        // typed anything - comparing normalized copies avoids treating that as a real edit
-        // (which would otherwise commit a no-op change and force a full design-surface reload
-        // just from focusing and then leaving the text box).
-        var typedText = GetSourceText();
+        // WinUI's TextBox normalizes line endings to '\r' internally, so reading .Text back can
+        // legitimately differ from ToXamlString()'s '\r\n' (or whatever the source file used)
+        // even when the user hasn't typed anything - comparing normalized copies avoids treating
+        // that as a real edit (which would otherwise commit a no-op change and force a full
+        // design-surface reload just from focusing and then leaving the text box).
+        var typedText = XamlSourceView.Text;
         var currentText = _currentDocument.ToXamlString();
         if (NormalizeLineEndings(typedText) == NormalizeLineEndings(currentText))
         {
@@ -1836,7 +1732,8 @@ public sealed partial class MainWindow : Window
         }
 
         ShowXamlPaneTab(XamlPaneTab.Source);
-        SetSourceSelection(offset, 0);
+        XamlSourceView.SelectionStart = offset;
+        XamlSourceView.SelectionLength = 0;
         XamlSourceView.Focus(FocusState.Programmatic);
     }
 
@@ -1990,7 +1887,7 @@ public sealed partial class MainWindow : Window
     /// <param name="text">The XAML text to display.</param>
     private void SetXamlSourceText(string text)
     {
-        SetSourceText(text);
+        XamlSourceView.Text = text;
         UpdateSaveButtonState();
     }
 
