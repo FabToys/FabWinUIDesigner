@@ -1421,8 +1421,14 @@ public sealed partial class MainWindow : Window
             return true;
         }
 
+        // WinUI's TextBox normalizes line endings to '\r' internally, so reading .Text back can
+        // legitimately differ from ToXamlString()'s '\r\n' (or whatever the source file used)
+        // even when the user hasn't typed anything - comparing normalized copies avoids treating
+        // that as a real edit (which would otherwise commit a no-op change and force a full
+        // design-surface reload just from focusing and then leaving the text box).
         var typedText = XamlSourceView.Text;
-        if (typedText == _currentDocument.ToXamlString())
+        var currentText = _currentDocument.ToXamlString();
+        if (NormalizeLineEndings(typedText) == NormalizeLineEndings(currentText))
         {
             SetXamlSourceError(null);
             return true;
@@ -1467,6 +1473,11 @@ public sealed partial class MainWindow : Window
     }
 
     private XamlPaneTab _xamlPaneTab = XamlPaneTab.Source;
+
+    /// <summary>Collapses '\r\n' and lone '\r' to '\n', so text that only differs by line-ending style compares as equal.</summary>
+    /// <param name="text">Text to normalize.</param>
+    /// <returns>The text with all line endings collapsed to '\n'.</returns>
+    private static string NormalizeLineEndings(string text) => text.Replace("\r\n", "\n").Replace('\r', '\n');
 
     /// <summary>
     /// Updates the Errors tab/warning-icon with the current error (or clears it). Deliberately
