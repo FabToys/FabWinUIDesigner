@@ -176,7 +176,7 @@ public sealed partial class MainWindow : Window
         _lastSavedXaml = doc.ToXamlString();
 
         RefreshDesignSurfaceFromDocument();
-        SelectDocumentRoot();
+        SelectDocumentRootAfterLayout();
         UpdateSaveButtonState();
     }
 
@@ -490,7 +490,7 @@ public sealed partial class MainWindow : Window
             _lastSavedXaml = doc.ToXamlString();
 
             RefreshDesignSurfaceFromDocument();
-            SelectDocumentRoot();
+            SelectDocumentRootAfterLayout();
             AddRecentFile(path);
         }
         catch (Exception ex)
@@ -729,10 +729,32 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
+    /// <see cref="SelectDocumentRoot"/>, deferred to run after WinUI has actually laid out the
+    /// freshly-loaded live tree. Calling it immediately (synchronously, right after
+    /// <see cref="RefreshDesignSurfaceFromDocument"/> assigns <c>DesignSurfaceHost.Child</c>)
+    /// selects the right element but with a zero-sized adorner rectangle - the selection label
+    /// shows fine (it sizes to its own text, not to the selected element's bounds), but the
+    /// dashed border doesn't, since <c>ActualWidth</c>/<c>ActualHeight</c> are still 0 at that
+    /// point (see research/34-select-root-adorner-timing.md). Same fix already used for the
+    /// debug preview snapshot in <see cref="RefreshDesignSurfaceFromDocument"/> - force a layout
+    /// pass first via <c>UpdateLayout()</c>, deferred onto the dispatcher queue since layout
+    /// itself only happens asynchronously, not synchronously when a Child is assigned.
+    /// </summary>
+    private void SelectDocumentRootAfterLayout()
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            DesignSurfaceHost.UpdateLayout();
+            SelectDocumentRoot();
+        });
+    }
+
+    /// <summary>
     /// Selects the document's root design element (its first child - typically the root Canvas,
     /// e.g. in SimplePage.xaml) right after loading/creating a document, instead of leaving
     /// nothing selected (or, before research/32-select-root-on-load.md's fix, whatever the old
-    /// caret-to-end-of-text side effect happened to land on). Called after
+    /// caret-to-end-of-text side effect happened to land on). Called (deferred - see
+    /// <see cref="SelectDocumentRootAfterLayout"/>) after
     /// <see cref="RefreshDesignSurfaceFromDocument"/>.
     /// </summary>
     private void SelectDocumentRoot()
