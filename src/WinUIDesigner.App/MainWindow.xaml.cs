@@ -1308,22 +1308,42 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        var index = DocumentOrderIndex(_currentDocument.Root.Element, designElement.Element);
-        if (index < 0)
+        // Selecting a control is core functionality; jumping the source-pane caret to match is
+        // a convenience on top of it. Isolated in its own try/catch so nothing about this
+        // (reparsing, line-info lookup, or setting SelectionStart on a TextBox that may
+        // currently be Collapsed behind the Errors tab - see research/23-xaml-error-tabs.md) can
+        // ever take the selection itself down with it.
+        try
         {
-            return;
-        }
+            var index = DocumentOrderIndex(_currentDocument.Root.Element, designElement.Element);
+            if (index < 0)
+            {
+                return;
+            }
 
-        var text = _currentDocument.ToXamlString();
-        var reparsed = XDocument.Parse(text, LoadOptions.SetLineInfo);
-        var target = reparsed.Root?.DescendantsAndSelf().ElementAtOrDefault(index);
-        if (target is not IXmlLineInfo lineInfo || !lineInfo.HasLineInfo())
+            var text = _currentDocument.ToXamlString();
+            var reparsed = XDocument.Parse(text, LoadOptions.SetLineInfo);
+            var target = reparsed.Root?.DescendantsAndSelf().ElementAtOrDefault(index);
+            if (target is not IXmlLineInfo lineInfo || !lineInfo.HasLineInfo())
+            {
+                return;
+            }
+
+            // The Errors tab hides XamlSourceView (Visibility.Collapsed) while it's showing -
+            // setting SelectionStart on a collapsed TextBox isn't meaningful, so only jump the
+            // caret while the Source tab is actually the one visible.
+            if (_xamlPaneTab != XamlPaneTab.Source)
+            {
+                return;
+            }
+
+            XamlSourceView.SelectionStart = OffsetOf(text, lineInfo.LineNumber, lineInfo.LinePosition);
+            XamlSourceView.SelectionLength = 0;
+        }
+        catch (Exception)
         {
-            return;
+            // Best-effort - failing to jump the caret isn't fatal, and must never break Select().
         }
-
-        XamlSourceView.SelectionStart = OffsetOf(text, lineInfo.LineNumber, lineInfo.LinePosition);
-        XamlSourceView.SelectionLength = 0;
     }
 
     /// <summary>Finds <paramref name="target"/>'s zero-based position in <paramref name="root"/>'s pre-order (document-order) element sequence - root itself is position 0.</summary>
