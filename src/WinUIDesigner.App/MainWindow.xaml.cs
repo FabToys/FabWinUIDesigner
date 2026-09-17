@@ -137,6 +137,8 @@ public sealed partial class MainWindow : Window
     /// <summary>Starts a blank document, confirming discard first if the current one has unsaved changes.</summary>
     private async void NewButton_Click(object sender, RoutedEventArgs e)
     {
+        // SaveButton.IsEnabled doubles as our "is dirty" flag (see UpdateSaveButtonState) - ask
+        // for confirmation only when there's actually something that would be lost.
         if (SaveButton.IsEnabled)
         {
             var dialog = new ContentDialog
@@ -155,6 +157,7 @@ public sealed partial class MainWindow : Window
             }
         }
 
+        // Same reset as LoadFile, but from the blank template and with no path yet.
         var doc = XamlDocument.Parse(NewDocumentTemplate);
         _currentDocument = doc;
         _currentFilePath = null;
@@ -376,6 +379,9 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        // A disabled MenuFlyoutItem acts as a non-clickable section header, since MenuFlyout has
+        // no built-in grouping/header control. Path is stashed in Tag so the click handler knows
+        // which entry was clicked without a closure per item.
         if (_recentFiles.Count > 0)
         {
             RecentFlyout.Items.Add(new MenuFlyoutItem { Text = "Recent Files", IsEnabled = false });
@@ -499,6 +505,9 @@ public sealed partial class MainWindow : Window
             : new Dictionary<UIElement, DesignElement>();
         ClearSelection();
 
+        // Deferred to the dispatcher queue so it runs after this method returns and WinUI has
+        // actually laid out the newly-set DesignSurfaceHost.Child - rendering it immediately
+        // here would capture stale (often zero-sized) bounds.
         DispatcherQueue.TryEnqueue(async () =>
         {
             DesignSurfaceHost.UpdateLayout();
@@ -698,6 +707,9 @@ public sealed partial class MainWindow : Window
         // that's the space Canvas.Left/Top live in.
         var localPoint = e.GetCurrentPoint(DesignSurfaceHost).Position;
 
+        // Hits come back topmost-first, so the loop picks the first one that's actually one of
+        // our design elements (a hit can also be some internal visual-tree piece of a control
+        // that isn't in _liveToDesign, e.g. a Button's inner border) and ignores the rest.
         foreach (var hit in hits)
         {
             if (hit is UIElement hitElement && _liveToDesign.TryGetValue(hitElement, out var designElement))
@@ -840,6 +852,9 @@ public sealed partial class MainWindow : Window
         var width = startWidth;
         var height = startHeight;
 
+        // Dragging the W(est) edge/corner keeps the right edge fixed: width shrinks/grows by
+        // -deltaX, and left has to move by whatever width didn't (so it "eats into" the element
+        // instead of sliding the whole thing). Dragging E just grows width - left never moves.
         if (direction.Contains('W'))
         {
             width = Math.Max(MinElementSize, startWidth - deltaX);
@@ -850,6 +865,7 @@ public sealed partial class MainWindow : Window
             width = Math.Max(MinElementSize, startWidth + deltaX);
         }
 
+        // Same idea vertically: N(orth) keeps the bottom edge fixed, S just grows height.
         if (direction.Contains('N'))
         {
             height = Math.Max(MinElementSize, startHeight - deltaY);
@@ -964,10 +980,13 @@ public sealed partial class MainWindow : Window
     {
         PropertyGridPanel.Children.Clear();
 
+        // Column 0 = fixed-width labels, column 1 = editors that stretch to fill the rest.
         var grid = new Grid();
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(90) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
+        // One row per property this element type has (per PropertyGridSchema's curated list -
+        // WinUI controls don't expose design-time attributes to discover this via reflection).
         var descriptors = PropertyGridSchema.GetProperties(designElement.LocalName);
         for (var row = 0; row < descriptors.Count; row++)
         {
@@ -1004,6 +1023,9 @@ public sealed partial class MainWindow : Window
     {
         var currentText = designElement.GetAttribute(descriptor.Name) ?? string.Empty;
 
+        // Bool -> CheckBox, Enum -> ComboBox of its named values, everything else -> a plain
+        // TextBox (numbers, colors, thicknesses, ... are all typed as free text and parsed in
+        // ApplyPropertyEdit, same as they'd appear in real XAML).
         switch (descriptor.Kind)
         {
             case PropertyEditorKind.Bool:
@@ -1167,6 +1189,9 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        // TransformToVisual/TransformBounds converts the element's own (0,0,width,height) rect
+        // into DesignSurfaceHost-relative coordinates - needed because a selected element can be
+        // nested inside another container, not just placed directly on the root Canvas.
         var bounds = liveElement.TransformToVisual(DesignSurfaceHost)
             .TransformBounds(new Rect(0, 0, frameworkElement.ActualWidth, frameworkElement.ActualHeight));
 
@@ -1178,6 +1203,7 @@ public sealed partial class MainWindow : Window
         Canvas.SetLeft(SelectionLabel, bounds.X);
         Canvas.SetTop(SelectionLabel, Math.Max(0, bounds.Y - 20));
 
+        // Handles are centered ON the edge/corner, not inside or outside it, hence the half-size offset.
         const double half = HandleSize / 2.0;
         PositionHandle(HandleNW, bounds.Left - half, bounds.Top - half);
         PositionHandle(HandleN, bounds.Left + (bounds.Width / 2) - half, bounds.Top - half);
