@@ -1567,8 +1567,16 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            var offset = ex is XmlException xmlEx ? OffsetOf(typedText, xmlEx.LineNumber, xmlEx.LinePosition) : (int?)null;
-            SetXamlSourceErrors([new XamlErrorListItem($"XAML error: {ex.Message}", offset)]);
+            // XmlException (unlike XamlParseException below) has structured Line/LinePosition
+            // properties - no message-scraping needed for this case.
+            var item = ex is XmlException xmlEx
+                ? new XamlErrorListItem(
+                    xmlEx.LineNumber.ToString(CultureInfo.InvariantCulture),
+                    xmlEx.LinePosition.ToString(CultureInfo.InvariantCulture),
+                    CleanErrorMessage(ex.Message),
+                    OffsetOf(typedText, xmlEx.LineNumber, xmlEx.LinePosition))
+                : new XamlErrorListItem(string.Empty, string.Empty, CleanErrorMessage(ex.Message), null);
+            SetXamlSourceErrors([item]);
             return false;
         }
 
@@ -1588,7 +1596,9 @@ public sealed partial class MainWindow : Window
             var errors = FindUnknownPropertyErrors(parsedText);
             if (errors.Count == 0)
             {
-                errors.Add(new XamlErrorListItem($"XAML error: {status}", TryExtractLineOffset(parsedText, status)));
+                var line = TryExtractLine(status);
+                var offset = line is int l ? OffsetOf(parsedText, l, 1) : (int?)null;
+                errors.Add(new XamlErrorListItem(line?.ToString(CultureInfo.InvariantCulture) ?? string.Empty, string.Empty, CleanErrorMessage(status), offset));
             }
 
             SetXamlSourceErrors(errors);
@@ -1681,10 +1691,12 @@ public sealed partial class MainWindow : Window
                     continue;
                 }
 
-                var offset = element is IXmlLineInfo lineInfo && lineInfo.HasLineInfo()
-                    ? OffsetOf(text, lineInfo.LineNumber, lineInfo.LinePosition)
-                    : (int?)null;
-                errors.Add(new XamlErrorListItem($"'{name}' is not a property or event on <{element.Name.LocalName}>.", offset));
+                var lineInfo = element as IXmlLineInfo;
+                var hasLineInfo = lineInfo?.HasLineInfo() == true;
+                var offset = hasLineInfo ? OffsetOf(text, lineInfo!.LineNumber, lineInfo.LinePosition) : (int?)null;
+                var lineText = hasLineInfo ? lineInfo!.LineNumber.ToString(CultureInfo.InvariantCulture) : string.Empty;
+                var columnText = hasLineInfo ? lineInfo!.LinePosition.ToString(CultureInfo.InvariantCulture) : string.Empty;
+                errors.Add(new XamlErrorListItem(lineText, columnText, CleanErrorMessage($"'{name}' is not a property or event on <{element.Name.LocalName}>."), offset));
             }
         }
 
@@ -1694,28 +1706,35 @@ public sealed partial class MainWindow : Window
     /// <summary>
     /// Tries to pull a line number out of a WinUI XamlParseException's message (its only place
     /// with this info - unlike <see cref="XmlException"/>, it has no structured Line/Position
-    /// properties). Jumps to the *start* of that line rather than trying to preserve the exact
-    /// reported column, since the message's position refers to whichever sanitized copy of the
-    /// XAML <see cref="XamlPreviewLoader"/> actually tried (x:Class/event attributes stripped -
-    /// see <see cref="XamlPreviewSanitizer"/>), not the original text shown in the editor - a
-    /// stripped-earlier attribute shifts later columns on the same line, but not the line itself
-    /// (this app's XAML is one element per line).
+    /// properties). Only the line, not the column: the message's position refers to whichever
+    /// sanitized copy of the XAML <see cref="XamlPreviewLoader"/> actually tried (x:Class/event
+    /// attributes stripped - see <see cref="XamlPreviewSanitizer"/>), not the original text shown
+    /// in the editor - a stripped-earlier attribute shifts later columns on the same line, but
+    /// not the line itself (this app's XAML is one element per line), so the line number can be
+    /// trusted but the column can't.
     /// </summary>
-    /// <param name="text">The original (unstripped) document text to compute the offset within.</param>
     /// <param name="exceptionMessage">The exception message to scan for a line number.</param>
-    /// <returns>The offset of the start of that line, or null if no line number could be found.</returns>
-    private static int? TryExtractLineOffset(string text, string exceptionMessage)
+    /// <returns>The 1-based line number, or null if none could be found.</returns>
+    private static int? TryExtractLine(string exceptionMessage)
     {
         var match = Regex.Match(exceptionMessage, @"Line:\s*(\d+)");
-        return match.Success
-            ? OffsetOf(text, int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture), 1)
-            : null;
+        return match.Success ? int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture) : null;
     }
 
-    /// <summary>One entry in the Errors tab: a message and, when available, the character offset in the source text to jump to when clicked.</summary>
-    /// <param name="Message">Human-readable error text.</param>
+    /// <summary>Strips the redundant embedded "[Line: N Position: M]" suffix some exception messages carry (now shown in the Errors grid's own Line/Column columns instead) and collapses any embedded newlines, so the message fits cleanly on one grid row.</summary>
+    /// <param name="message">Raw exception message.</param>
+    /// <returns>The cleaned-up, single-line message.</returns>
+    private static string CleanErrorMessage(string message) =>
+        Regex.Replace(message, @"\s*\[Line:\s*\d+\s*Position:\s*\d+\]\s*$", string.Empty)
+            .Replace("\r\n", " ").Replace('\r', ' ').Replace('\n', ' ')
+            .Trim();
+
+    /// <summary>One row in the Errors grid.</summary>
+    /// <param name="LineText">1-based line number as display text, or empty if unknown.</param>
+    /// <param name="ColumnText">1-based column number as display text, or empty if unknown.</param>
+    /// <param name="Message">Human-readable, single-line error text (see <see cref="CleanErrorMessage"/>).</param>
     /// <param name="Offset">0-based character offset into the XAML source to jump to on click, or null if no position could be determined.</param>
-    private sealed record XamlErrorListItem(string Message, int? Offset)
+    private sealed record XamlErrorListItem(string LineText, string ColumnText, string Message, int? Offset)
     {
         public override string ToString() => Message;
     }
@@ -1793,7 +1812,7 @@ public sealed partial class MainWindow : Window
     {
         _xamlPaneTab = tab;
         XamlSourceView.Visibility = tab == XamlPaneTab.Source ? Visibility.Visible : Visibility.Collapsed;
-        XamlErrorsList.Visibility = tab == XamlPaneTab.Errors ? Visibility.Visible : Visibility.Collapsed;
+        XamlErrorsPanel.Visibility = tab == XamlPaneTab.Errors ? Visibility.Visible : Visibility.Collapsed;
         UpdateXamlPaneTabButtonVisuals();
     }
 

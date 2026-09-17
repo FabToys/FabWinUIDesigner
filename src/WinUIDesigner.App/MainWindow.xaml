@@ -155,21 +155,52 @@
                         ScrollViewer.HorizontalScrollBarVisibility="Auto"
                         ScrollViewer.VerticalScrollBarVisibility="Auto" />
 
-                    <!-- IsItemClickEnabled: clicking a row (not just selecting it) jumps the
-                         source view's caret there - see XamlErrorsList_ItemClick. -->
-                    <ListView
-                        x:Name="XamlErrorsList"
-                        Visibility="Collapsed"
-                        Margin="8"
-                        IsItemClickEnabled="True"
-                        ItemClick="XamlErrorsList_ItemClick"
-                        SelectionMode="None">
-                        <ListView.ItemTemplate>
-                            <DataTemplate>
-                                <TextBlock Text="{Binding}" Foreground="Red" TextWrapping="Wrap" FontFamily="Consolas" />
-                            </DataTemplate>
-                        </ListView.ItemTemplate>
-                    </ListView>
+                    <!-- Line/Column/Message "grid": no real DataGrid control ships in the base
+                         WinUI SDK, so this is a header row + a ListView whose rows share the
+                         same 3-column layout, not a literal DataGrid - same "roll a simple
+                         custom thing instead of adding a dependency" pattern as the drag
+                         splitters and hover-cursor CursorGrid. -->
+                    <Grid x:Name="XamlErrorsPanel" Visibility="Collapsed" Margin="8">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+
+                        <Grid Grid.Row="0" Padding="8,2" BorderBrush="Gray" BorderThickness="0,0,0,1">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="50" />
+                                <ColumnDefinition Width="60" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Line" FontWeight="Bold" FontSize="11" />
+                            <TextBlock Grid.Column="1" Text="Column" FontWeight="Bold" FontSize="11" />
+                            <TextBlock Grid.Column="2" Text="Message" FontWeight="Bold" FontSize="11" />
+                        </Grid>
+
+                        <!-- IsItemClickEnabled: clicking a row (not just selecting it) jumps the
+                             source view's caret there - see XamlErrorsList_ItemClick. -->
+                        <ListView
+                            x:Name="XamlErrorsList"
+                            Grid.Row="1"
+                            IsItemClickEnabled="True"
+                            ItemClick="XamlErrorsList_ItemClick"
+                            SelectionMode="None">
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Padding="8,2">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="50" />
+                                            <ColumnDefinition Width="60" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="{Binding LineText}" Foreground="Red" FontFamily="Consolas" FontSize="12" />
+                                        <TextBlock Grid.Column="1" Text="{Binding ColumnText}" Foreground="Red" FontFamily="Consolas" FontSize="12" />
+                                        <TextBlock Grid.Column="2" Text="{Binding Message}" Foreground="Red" FontFamily="Consolas" FontSize="12" TextWrapping="Wrap" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                    </Grid>
                 </Grid>
 
                 <!-- Tab strip goes BELOW its content (Fabrice's ask), unlike a normal top-tabbed
