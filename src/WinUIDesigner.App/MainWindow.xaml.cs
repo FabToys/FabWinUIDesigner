@@ -188,8 +188,22 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>Saves the current document, prompting for a location first ("Save As" semantics) if it doesn't have a path yet (i.e. it came from New File).</summary>
-    private async void SaveButton_Click(object sender, RoutedEventArgs e)
+    private async void SaveButton_Click(object sender, RoutedEventArgs e) => await SaveCurrentDocumentAsync();
+
+    /// <summary>
+    /// Commits any pending edit sitting in the XAML source view first (so Ctrl+S while typing
+    /// there behaves the way it would in a real text editor - save what you just typed, not the
+    /// stale on-disk state), then saves. If the pending edit is invalid XAML, the save is
+    /// skipped - saving the old document while an inline error is showing would look like the
+    /// edit was silently discarded.
+    /// </summary>
+    private async Task SaveCurrentDocumentAsync()
     {
+        if (!TryApplyXamlSourceEdit())
+        {
+            return;
+        }
+
         if (_currentDocument is null)
         {
             return;
@@ -920,12 +934,24 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Escape deselects ("cancel"); Delete removes the selected control. Guarded against a
-    /// TextBox having focus (e.g. editing a property value) so Delete there edits text as
-    /// expected instead of deleting the whole control.
+    /// Escape deselects ("cancel"); Delete removes the selected control; Ctrl+S saves. Escape/
+    /// Delete/Ctrl+Z/Ctrl+Y are guarded against a TextBox having focus (e.g. editing a property
+    /// value or the XAML source view) so those keys edit text as expected there instead of
+    /// acting on the design surface. Ctrl+S is deliberately exempt from that guard - it commits
+    /// any pending XAML source edit and saves regardless of which control has focus, same as
+    /// Ctrl+S would in any real text editor.
     /// </summary>
-    private void RootGrid_KeyDown(object sender, KeyRoutedEventArgs e)
+    private async void RootGrid_KeyDown(object sender, KeyRoutedEventArgs e)
     {
+        var ctrlDown = InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Control).HasFlag(CoreVirtualKeyStates.Down);
+
+        if (e.Key == VirtualKey.S && ctrlDown)
+        {
+            await SaveCurrentDocumentAsync();
+            e.Handled = true;
+            return;
+        }
+
         // Also guards Ctrl+Z/Y here, not just Escape/Delete - a TextBox has its own built-in
         // undo for text edits, and intercepting Ctrl+Z at the window level while typing in a
         // property field would fight with that instead of undoing the field's own typing.
@@ -933,8 +959,6 @@ public sealed partial class MainWindow : Window
         {
             return;
         }
-
-        var ctrlDown = InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Control).HasFlag(CoreVirtualKeyStates.Down);
 
         switch (e.Key)
         {
@@ -1255,6 +1279,59 @@ public sealed partial class MainWindow : Window
         {
             SetXamlSourceText(_currentDocument.ToXamlString());
         }
+    }
+
+    /// <summary>Commits whatever's typed in the XAML source view when it loses focus (M6b two-way sync) - the same trigger a real text editor uses for "did the user finish this edit".</summary>
+    private void XamlSourceView_LostFocus(object sender, RoutedEventArgs e) => TryApplyXamlSourceEdit();
+
+    /// <summary>
+    /// If the XAML source view's text differs from the current document, tries to re-parse it
+    /// and, on success, swaps it in as the current document through the same undo-tracked
+    /// pipeline every other edit (move, resize, property edit, ...) goes through - not a
+    /// separate code path - then does a full design-surface reload. On a parse failure, shows
+    /// an inline error and leaves both the typed text and the in-memory document untouched, so
+    /// a mid-edit typo never crashes the app or silently discards what was typed.
+    /// </summary>
+    /// <returns>True if there was nothing to commit, or the commit succeeded; false if the typed text is invalid XAML (an error is now showing).</returns>
+    private bool TryApplyXamlSourceEdit()
+    {
+        if (_currentDocument is null)
+        {
+            return true;
+        }
+
+        var typedText = XamlSourceView.Text;
+        if (typedText == _currentDocument.ToXamlString())
+        {
+            SetXamlSourceError(null);
+            return true;
+        }
+
+        XamlDocument parsed;
+        try
+        {
+            parsed = XamlDocument.Parse(typedText);
+        }
+        catch (Exception ex)
+        {
+            SetXamlSourceError($"XAML error: {ex.Message}");
+            return false;
+        }
+
+        BeginUndoableChange();
+        _currentDocument = parsed;
+        CommitUndoableChange();
+        RefreshDesignSurfaceFromDocument();
+        SetXamlSourceError(null);
+        return true;
+    }
+
+    /// <summary>Shows or hides the inline XAML-source error message.</summary>
+    /// <param name="message">Error text to show, or null to hide the error.</param>
+    private void SetXamlSourceError(string? message)
+    {
+        XamlSourceErrorText.Text = message ?? string.Empty;
+        XamlSourceErrorText.Visibility = message is null ? Visibility.Collapsed : Visibility.Visible;
     }
 
     /// <summary>Call right before a mutation starts. Paired with <see cref="CommitUndoableChange"/>.</summary>

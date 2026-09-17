@@ -120,17 +120,19 @@
             <Grid Grid.Row="2">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
-                <TextBlock Grid.Row="0" Text="XAML Source (read-only)" FontWeight="Bold" Margin="8,8,8,4" />
+                <TextBlock Grid.Row="0" Text="XAML Source" FontWeight="Bold" Margin="8,8,8,4" />
+                <TextBlock x:Name="XamlSourceErrorText" Grid.Row="1" Foreground="Red" TextWrapping="Wrap" FontSize="11" Margin="8,0,8,4" Visibility="Collapsed" />
                 <TextBox
                     x:Name="XamlSourceView"
-                    Grid.Row="1"
-                    IsReadOnly="True"
+                    Grid.Row="2"
                     AcceptsReturn="True"
                     TextWrapping="NoWrap"
                     FontFamily="Consolas"
                     Margin="8"
+                    LostFocus="XamlSourceView_LostFocus"
                     ScrollViewer.HorizontalScrollBarVisibility="Auto"
                     ScrollViewer.VerticalScrollBarVisibility="Auto" />
             </Grid>
