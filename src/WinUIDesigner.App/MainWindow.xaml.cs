@@ -140,11 +140,24 @@ public sealed partial class MainWindow : Window
 
         UpdateXamlPaneTabButtonVisuals();
 
-        // TextControlBox's XML mode is close enough to XAML (XAML is XML-shaped) to use as-is -
-        // see research/40. Enabled explicitly since the property grid schema doesn't cover
-        // third-party controls, so there's no XAML-attribute equivalent to set this declaratively.
+        // The built-in XML mode (SelectSyntaxHighlightingById(SyntaxHighlightID.XML)) turned out
+        // to look broken on real XAML: its one regex for an opening tag greedily matches the
+        // *whole* tag including every attribute, and its attribute-name and attribute-value
+        // colors happen to be the exact same green in light theme - so a multi-attribute line
+        // like the root Page/Canvas's xmlns block rendered as "tag name, then everything else in
+        // one solid color" instead of readable syntax coloring (found via Fabrice's own
+        // interactive testing). XamlSyntaxHighlightingJson below is a custom scheme instead -
+        // separate regexes for the tag name, each attribute name, and each quoted value, so they
+        // never collapse into one match or share a color. Verified against real WinRT-projected
+        // JSON parsing (Newtonsoft.Json under the hood - a plain JSON array for Filter, which the
+        // library's own type expects as a pipe-delimited *string*, silently failed to deserialize)
+        // with a throwaway probe before trusting it here - same technique as research/35.
         XamlSourceView.EnableSyntaxHighlighting = true;
-        XamlSourceView.SelectSyntaxHighlightingById(SyntaxHighlightID.XML);
+        var xamlHighlighting = TextControlBox.GetSyntaxHighlightingFromJson(XamlSyntaxHighlightingJson);
+        if (xamlHighlighting.Succeed)
+        {
+            XamlSourceView.SyntaxHighlighting = xamlHighlighting.SyntaxHighlighting;
+        }
 
         // Wired here rather than as XAML event attributes: TextControlBox's event delegates
         // don't match TextBox's shapes (LostFocus/GotFocus pass only a sender, no EventArgs;
@@ -158,6 +171,31 @@ public sealed partial class MainWindow : Window
         };
         XamlSourceView.GotFocus += _ => _xamlSourceViewHasFocus = true;
     }
+
+    /// <summary>
+    /// A custom syntax-highlighting scheme for <see cref="XamlSourceView"/>, in
+    /// <c>TextControlBox.GetSyntaxHighlightingFromJson</c>'s own JSON shape (its
+    /// <c>JsonSyntaxHighlighting</c> DTO - <c>Filter</c> is a pipe-delimited <em>string</em>, not
+    /// a JSON array, confirmed via a throwaway probe against the real package before trusting it
+    /// here). Colors follow Visual Studio's classic XML/XAML editor palette (research/35): element
+    /// names maroon, attribute names red, quoted values blue, comments green - each its own
+    /// regex, deliberately narrower than the built-in XML language's single whole-tag regex (see
+    /// the comment in the constructor for why that one looked broken on real XAML).
+    /// </summary>
+    private const string XamlSyntaxHighlightingJson = """
+        {
+            "Name": "XAML",
+            "Author": "WinUIDesigner",
+            "Filter": ".xaml",
+            "Description": "XAML palette matching Visual Studio's default XML/XAML editor colors",
+            "Highlights": [
+                { "Pattern": "</?([a-zA-Z_:][\\w:.-]*)", "ColorLight": "#A31515", "ColorDark": "#E06C75" },
+                { "Pattern": "[a-zA-Z_:][\\w:.-]*(?==)", "ColorLight": "#FF0000", "ColorDark": "#D19A66" },
+                { "Pattern": "\"[^\"\\n]*\"", "ColorLight": "#0000FF", "ColorDark": "#98C379" },
+                { "Pattern": "<!--[\\s\\S]*?-->", "ColorLight": "#008000", "ColorDark": "#7F848E" }
+            ]
+        }
+        """;
 
     /// <summary>A blank single-Canvas Page, same shape as the sample fixtures minus x:Class (a brand-new file has no code-behind yet).</summary>
     private const string NewDocumentTemplate =
