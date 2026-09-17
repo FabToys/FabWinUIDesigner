@@ -13,6 +13,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Xml;
 using System.Xml.Linq;
+using TextControlBoxNS;
 using Windows.Foundation;
 using Windows.Graphics.Imaging;
 using Windows.Storage;
@@ -48,6 +49,11 @@ public sealed partial class MainWindow : Window
     private IReadOnlyDictionary<UIElement, DesignElement> _liveToDesign = new Dictionary<UIElement, DesignElement>();
     private UIElement? _selectedLiveElement;
     private DesignElement? _selectedDesignElement;
+
+    // TextControlBox (unlike TextBox) doesn't route keyboard focus through a plain TextBox
+    // instance, so RootGrid_KeyDown's "is a TextBox focused?" guard can't see it by type -
+    // tracked explicitly via this control's own GotFocus/LostFocus instead (see the constructor).
+    private bool _xamlSourceViewHasFocus;
 
     // Undo/Redo: whole-document text snapshots rather than a command pattern - simple, and
     // cheap enough at our document sizes. _pendingUndoSnapshot is set by BeginUndoableChange()
@@ -133,6 +139,24 @@ public sealed partial class MainWindow : Window
         RefreshRecentMenu();
 
         UpdateXamlPaneTabButtonVisuals();
+
+        // TextControlBox's XML mode is close enough to XAML (XAML is XML-shaped) to use as-is -
+        // see research/40. Enabled explicitly since the property grid schema doesn't cover
+        // third-party controls, so there's no XAML-attribute equivalent to set this declaratively.
+        XamlSourceView.EnableSyntaxHighlighting = true;
+        XamlSourceView.SelectSyntaxHighlightingById(SyntaxHighlightID.XML);
+
+        // Wired here rather than as XAML event attributes: TextControlBox's event delegates
+        // don't match TextBox's shapes (LostFocus/GotFocus pass only a sender, no EventArgs;
+        // SelectionChanged's second parameter is a type specific to this control) - implicit-
+        // typed lambdas bind against whatever the real delegate is without needing to name it.
+        XamlSourceView.SelectionChanged += (_, _) => XamlSourceView_SelectionChanged();
+        XamlSourceView.LostFocus += _ =>
+        {
+            _xamlSourceViewHasFocus = false;
+            XamlSourceView_LostFocus();
+        };
+        XamlSourceView.GotFocus += _ => _xamlSourceViewHasFocus = true;
     }
 
     /// <summary>A blank single-Canvas Page, same shape as the sample fixtures minus x:Class (a brand-new file has no code-behind yet).</summary>
@@ -1037,10 +1061,13 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        // Also guards Ctrl+Z/Y here, not just Escape/Delete - a TextBox has its own built-in
-        // undo for text edits, and intercepting Ctrl+Z at the window level while typing in a
-        // property field would fight with that instead of undoing the field's own typing.
-        if (FocusManager.GetFocusedElement(Content.XamlRoot) is TextBox)
+        // Also guards Ctrl+Z/Y here, not just Escape/Delete - a TextBox (property grid fields)
+        // or the XamlSourceView TextControlBox both have their own built-in undo for text edits,
+        // and intercepting Ctrl+Z at the window level while typing in either would fight with
+        // that instead of undoing the field's own typing. TextControlBox doesn't surface as a
+        // TextBox to FocusManager, hence the separate _xamlSourceViewHasFocus flag (tracked via
+        // its own GotFocus/LostFocus in the constructor).
+        if (_xamlSourceViewHasFocus || FocusManager.GetFocusedElement(Content.XamlRoot) is TextBox)
         {
             return;
         }
@@ -1369,12 +1396,11 @@ public sealed partial class MainWindow : Window
     /// useful in practice - selecting on the design surface no longer touches the source pane's
     /// caret at all. Only acts while the source view's text matches the current document exactly
     /// (normalizing line endings, same as <see cref="TryApplyXamlSourceEdit"/>)
-    /// - <see cref="Microsoft.UI.Xaml.Controls.TextBox.SelectionChanged"/> fires on every caret
-    /// move, including ones caused by typing, so this deliberately does nothing while there's an
-    /// uncommitted edit in progress rather than fighting the user's typing with a selection
-    /// rebuild on every keystroke.
+    /// - <c>TextControlBox.SelectionChanged</c> fires on every caret move, including ones caused
+    /// by typing, so this deliberately does nothing while there's an uncommitted edit in progress
+    /// rather than fighting the user's typing with a selection rebuild on every keystroke.
     /// </summary>
-    private void XamlSourceView_SelectionChanged(object sender, RoutedEventArgs e)
+    private void XamlSourceView_SelectionChanged()
     {
         if (_currentDocument is null || _xamlPaneTab != XamlPaneTab.Source)
         {
@@ -1389,8 +1415,15 @@ public sealed partial class MainWindow : Window
                 return;
             }
 
+            // TextControlBox has no flat character-offset caret property (unlike TextBox's
+            // SelectionStart) - CursorPosition gives a zero-based (line, character) pair instead,
+            // converted to a flat offset via the same OffsetOf helper the Errors grid's
+            // line/column positions already use (it takes 1-based line/column, hence the +1s).
+            var caret = XamlSourceView.CursorPosition;
+            var caretOffset = OffsetOf(text, caret.LineNumber + 1, caret.CharacterPosition + 1);
+
             var reparsed = XDocument.Parse(text, LoadOptions.SetLineInfo);
-            var index = EnclosingElementIndex(reparsed, text, XamlSourceView.SelectionStart);
+            var index = EnclosingElementIndex(reparsed, text, caretOffset);
             if (index < 0)
             {
                 return;
@@ -1486,7 +1519,7 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>Commits whatever's typed in the XAML source view when it loses focus (M6b two-way sync) - the same trigger a real text editor uses for "did the user finish this edit".</summary>
-    private void XamlSourceView_LostFocus(object sender, RoutedEventArgs e) => TryApplyXamlSourceEdit();
+    private void XamlSourceView_LostFocus() => TryApplyXamlSourceEdit();
 
     /// <summary>
     /// Reformats the current document's XAML with consistent indentation
@@ -1508,7 +1541,10 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        XamlSourceView.Text = _currentDocument.ToFormattedXamlString();
+        // LoadText, not the Text property - Text/SetText both record a step in TextControlBox's
+        // own internal undo stack, which this app never surfaces or uses (Ctrl+Z drives the
+        // app-level document undo instead - see _undoStack); LoadText resets without touching it.
+        XamlSourceView.LoadText(_currentDocument.ToFormattedXamlString(), autodetectTabsSpaces: false);
         TryApplyXamlSourceEdit();
     }
 
@@ -1732,8 +1768,7 @@ public sealed partial class MainWindow : Window
         }
 
         ShowXamlPaneTab(XamlPaneTab.Source);
-        XamlSourceView.SelectionStart = offset;
-        XamlSourceView.SelectionLength = 0;
+        XamlSourceView.SetSelection(offset, 0);
         XamlSourceView.Focus(FocusState.Programmatic);
     }
 
@@ -1887,7 +1922,8 @@ public sealed partial class MainWindow : Window
     /// <param name="text">The XAML text to display.</param>
     private void SetXamlSourceText(string text)
     {
-        XamlSourceView.Text = text;
+        // LoadText, not the Text property - see the comment in FormatDocumentButton_Click for why.
+        XamlSourceView.LoadText(text, autodetectTabsSpaces: false);
         UpdateSaveButtonState();
     }
 
