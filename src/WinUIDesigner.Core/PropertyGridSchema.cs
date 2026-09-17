@@ -1,5 +1,6 @@
 namespace WinUIDesigner.Core;
 
+/// <summary>Which property-grid editor control a property gets - see MainWindow.CreatePropertyEditor for how each kind maps to a control, and MainWindow.ApplyPropertyEdit for how each kind's text is parsed back into a live value.</summary>
 public enum PropertyEditorKind
 {
     Text,
@@ -10,6 +11,10 @@ public enum PropertyEditorKind
     Thickness,
 }
 
+/// <summary>One property-grid row: a property's name, which editor kind to show for it, and (for <see cref="PropertyEditorKind.Enum"/>) the values to offer.</summary>
+/// <param name="Name">The CLR/XAML property name, e.g. "Width" - used both as the attribute name and to look up the live property via reflection.</param>
+/// <param name="Kind">Which editor control to show.</param>
+/// <param name="EnumValues">Allowed values for an <see cref="PropertyEditorKind.Enum"/> property; unused otherwise.</param>
 public sealed record PropertyDescriptor(string Name, PropertyEditorKind Kind, string[]? EnumValues = null);
 
 /// <summary>
@@ -22,6 +27,9 @@ public sealed record PropertyDescriptor(string Name, PropertyEditorKind Kind, st
 /// </summary>
 public static class PropertyGridSchema
 {
+    // Shared by every control type below via the `.. CommonLayout` spread - every WinUI
+    // FrameworkElement has these, so listing them once here avoids repeating the same 6 lines
+    // in every entry of ByControlType.
     private static readonly PropertyDescriptor[] CommonLayout =
     [
         new("Width", PropertyEditorKind.Number),
@@ -77,6 +85,9 @@ public static class PropertyGridSchema
         ["Canvas"] = [.. CommonLayout, new("Background", PropertyEditorKind.Brush)],
     };
 
+    /// <summary>Gets the property list to show in the property grid for one control type.</summary>
+    /// <param name="controlTypeName">The element's XAML type name, e.g. "Button".</param>
+    /// <returns>"Name" (x:Name - every element gets this first) followed by the type's specific properties, or just <see cref="CommonLayout"/> for an unrecognized type.</returns>
     public static IReadOnlyList<PropertyDescriptor> GetProperties(string controlTypeName)
     {
         var specific = ByControlType.TryGetValue(controlTypeName, out var list) ? list : CommonLayout;

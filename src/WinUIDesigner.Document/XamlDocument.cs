@@ -18,18 +18,29 @@ public sealed class XamlDocument
         _xdoc = xdoc;
     }
 
+    /// <summary>The document's root element, wrapped. Throws if the underlying <see cref="XDocument"/> somehow has no root - shouldn't happen for any document that parsed successfully.</summary>
     public DesignElement Root => new(_xdoc.Root ?? throw new InvalidOperationException("XAML document has no root element."));
 
+    /// <summary>Loads a document from a `.xaml` file on disk.</summary>
+    /// <param name="path">Path of the file to load.</param>
+    /// <returns>The loaded document.</returns>
     public static XamlDocument Load(string path) => new(XDocument.Load(path, LoadOptions.PreserveWhitespace));
 
+    /// <summary>Parses a document from XAML text already in memory (e.g. a blank-document template, or a snapshot popped off the undo stack).</summary>
+    /// <param name="xaml">XAML text to parse.</param>
+    /// <returns>The parsed document.</returns>
     public static XamlDocument Parse(string xaml) => new(XDocument.Parse(xaml, LoadOptions.PreserveWhitespace));
 
+    /// <summary>Writes the document to a `.xaml` file, overwriting it if it already exists.</summary>
+    /// <param name="path">Destination file path.</param>
     public void Save(string path)
     {
         using var writer = XmlWriter.Create(path, WriterSettings);
         _xdoc.Save(writer);
     }
 
+    /// <summary>Serializes the document to a XAML string, using the same formatting <see cref="Save"/> writes to disk.</summary>
+    /// <returns>The document's current XAML text.</returns>
     public string ToXamlString()
     {
         var stringWriter = new StringWriter();

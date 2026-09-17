@@ -12,6 +12,10 @@ namespace WinUIDesigner.Core;
 /// </summary>
 public static class PropertyValueConverter
 {
+    /// <summary>Parses a color from either hex ("#RRGGBB"/"#AARRGGBB") or a named color (e.g. "Red"), matching what XAML itself accepts for a Brush property.</summary>
+    /// <param name="text">Text to parse.</param>
+    /// <param name="color">The parsed color, or <c>default</c> on failure.</param>
+    /// <returns>True if parsing succeeded.</returns>
     public static bool TryParseColor(string text, out Color color)
     {
         var trimmed = text.Trim();
@@ -41,6 +45,10 @@ public static class PropertyValueConverter
         return false;
     }
 
+    /// <summary>Parses a Thickness from XAML's own syntax ("N", "H,V", or "L,T,R,B"), via <see cref="PropertyValueParsing.TryParseThicknessParts"/>.</summary>
+    /// <param name="text">Text to parse.</param>
+    /// <param name="thickness">The parsed thickness, or <c>default</c> on failure.</param>
+    /// <returns>True if parsing succeeded.</returns>
     public static bool TryParseThickness(string text, out Thickness thickness)
     {
         if (PropertyValueParsing.TryParseThicknessParts(text, out var left, out var top, out var right, out var bottom))
@@ -53,6 +61,9 @@ public static class PropertyValueConverter
         return false;
     }
 
+    /// <summary>Formats a Thickness back to XAML attribute text, collapsing to a single number when all 4 sides are equal.</summary>
+    /// <param name="thickness">The thickness to format.</param>
+    /// <returns>The formatted attribute text.</returns>
     public static string FormatThickness(Thickness thickness) =>
         PropertyValueParsing.FormatThicknessParts(thickness.Left, thickness.Top, thickness.Right, thickness.Bottom);
 }

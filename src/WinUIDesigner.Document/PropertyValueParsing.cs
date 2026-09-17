@@ -9,6 +9,13 @@ namespace WinUIDesigner.Document;
 /// </summary>
 public static class PropertyValueParsing
 {
+    /// <summary>Parses a "#RRGGBB" or "#AARRGGBB" hex color string. Named colors ("Red", "White", ...) aren't handled here - see <see cref="WinUIDesigner.Core.PropertyValueConverter.TryParseColor"/>, which needs a live <c>Colors</c> lookup this project deliberately doesn't depend on.</summary>
+    /// <param name="text">Text to parse; must start with '#'.</param>
+    /// <param name="a">Parsed alpha channel (defaults to 255/opaque for the 6-digit "#RRGGBB" form, which has no alpha digits).</param>
+    /// <param name="r">Parsed red channel.</param>
+    /// <param name="g">Parsed green channel.</param>
+    /// <param name="b">Parsed blue channel.</param>
+    /// <returns>True if parsing succeeded.</returns>
     public static bool TryParseColorHex(string text, out byte a, out byte r, out byte g, out byte b)
     {
         a = 255;
@@ -48,6 +55,12 @@ public static class PropertyValueParsing
     }
 
     /// <summary>Matches XAML's own Thickness syntax: "N" (all 4 sides), "H,V", or "L,T,R,B".</summary>
+    /// <param name="text">Text to parse. An empty/whitespace-only string is accepted and parses to all-zero (used when a property is being cleared).</param>
+    /// <param name="left">Parsed left value.</param>
+    /// <param name="top">Parsed top value.</param>
+    /// <param name="right">Parsed right value.</param>
+    /// <param name="bottom">Parsed bottom value.</param>
+    /// <returns>True if parsing succeeded (including the empty-string case); false for anything with the wrong number of comma-separated parts or an unparsable number.</returns>
     public static bool TryParseThicknessParts(string text, out double left, out double top, out double right, out double bottom)
     {
         left = top = right = bottom = 0;
@@ -68,6 +81,9 @@ public static class PropertyValueParsing
             }
         }
 
+        // 1 part = uniform on all sides; 2 = horizontal/vertical pairs; 4 = each side
+        // individually - exactly XAML's own Thickness attribute grammar. Any other count (e.g.
+        // 3) is invalid.
         switch (values.Length)
         {
             case 1:
@@ -88,6 +104,12 @@ public static class PropertyValueParsing
         }
     }
 
+    /// <summary>Formats 4 thickness values back to XAML attribute text, collapsing to a single number when all 4 sides are equal.</summary>
+    /// <param name="left">Left value.</param>
+    /// <param name="top">Top value.</param>
+    /// <param name="right">Right value.</param>
+    /// <param name="bottom">Bottom value.</param>
+    /// <returns>A single number if all 4 sides match, otherwise "L,T,R,B".</returns>
     public static string FormatThicknessParts(double left, double top, double right, double bottom) =>
         left == top && top == right && right == bottom
             ? left.ToString(CultureInfo.InvariantCulture)
