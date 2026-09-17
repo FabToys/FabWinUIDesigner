@@ -1,9 +1,7 @@
 # Dev Setup
 
 ## Prerequisites
-- **.NET 8 SDK** (LTS). Verified working with `10.0.400`'s bundled 8.0.425 SDK — any 8.0.4xx
-  SDK works, since the SDK version used to *drive* the build can be newer than the
-  `net8.0`/`net8.0-windows10.0.19041.0` target frameworks the projects compile against.
+- **.NET 10 SDK** (LTS).
 - **Windows 10/11 SDK 10.0.19041.0 or later** — this machine has `10.0.26100.0` installed
   (under `C:\Program Files (x86)\Windows Kits\10`), which covers it.
 - **Visual Studio 2026** (v18) for day-to-day editing/debugging. The **Windows App SDK C#**
@@ -15,10 +13,9 @@
 - No MSIX/packaging tooling is required — the app is unpackaged (`WindowsPackageType=None`).
 
 ## Solution layout
-See `research/02-implementation-plan.md` for the full rationale. Quick reference:
 - `src/WinUIDesigner.Document` — pure .NET, no WinUI dependency.
 - `src/WinUIDesigner.CodeGen` — pure .NET, Roslyn-based.
-- `src/WinUIDesigner.Core` — WinUI-dependent (targets `net8.0-windows10.0.19041.0`).
+- `src/WinUIDesigner.Core` — WinUI-dependent (targets `net10.0-windows10.0.19041.0`).
 - `src/WinUIDesigner.App` — the WinUI 3 unpackaged app shell.
 - `tests/WinUIDesigner.Document.Tests`, `tests/WinUIDesigner.CodeGen.Tests` — MSTest.
 
@@ -59,7 +56,7 @@ solution-level build.
 ## Running the app
 ```
 dotnet build src/WinUIDesigner.App/WinUIDesigner.App.csproj -p:Platform=x64
-./src/WinUIDesigner.App/bin/x64/Debug/net8.0-windows10.0.19041.0/WinUIDesigner.App.exe
+./src/WinUIDesigner.App/bin/x64/Debug/net10.0-windows10.0.19041.0/WinUIDesigner.App.exe
 ```
 (`dotnet run` also works from inside `src/WinUIDesigner.App` once `Platform` is set, but the
 explicit build + launch above is what was verified during M0.)
