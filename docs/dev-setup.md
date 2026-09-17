@@ -13,35 +13,35 @@
 - No MSIX/packaging tooling is required — the app is unpackaged (`WindowsPackageType=None`).
 
 ## Solution layout
-- `src/WinUIDesigner.Document` — pure .NET, no WinUI dependency.
-- `src/WinUIDesigner.CodeGen` — pure .NET, Roslyn-based.
-- `src/WinUIDesigner.Core` — WinUI-dependent (targets `net10.0-windows10.0.19041.0`).
-- `src/WinUIDesigner.App` — the WinUI 3 unpackaged app shell.
-- `tests/WinUIDesigner.Document.Tests`, `tests/WinUIDesigner.CodeGen.Tests` — MSTest.
+- `src/FabWinUIDesigner.Document` — pure .NET, no WinUI dependency.
+- `src/FabWinUIDesigner.CodeGen` — pure .NET, Roslyn-based.
+- `src/FabWinUIDesigner.Core` — WinUI-dependent (targets `net10.0-windows10.0.19041.0`).
+- `src/FabWinUIDesigner.App` — the WinUI 3 unpackaged app shell.
+- `tests/FabWinUIDesigner.Document.Tests`, `tests/FabWinUIDesigner.CodeGen.Tests` — MSTest.
 
 ## Building from the command line
-The solution file is `WinUIDesigner.sln` (classic format — see note below on why, not
+The solution file is `FabWinUIDesigner.sln` (classic format — see note below on why, not
 `.slnx`). Build the whole solution with an explicit `Platform` (the WinUI-targeting projects,
 `Core` and `App`, don't support `AnyCPU`):
 
 ```
-dotnet build WinUIDesigner.sln -p:Configuration=Debug -p:Platform=x64
+dotnet build FabWinUIDesigner.sln -p:Configuration=Debug -p:Platform=x64
 ```
 
 Individual projects also build standalone the same way:
 
 ```
-dotnet build src/WinUIDesigner.Document/WinUIDesigner.Document.csproj
-dotnet build src/WinUIDesigner.CodeGen/WinUIDesigner.CodeGen.csproj
-dotnet build src/WinUIDesigner.Core/WinUIDesigner.Core.csproj -p:Platform=x64
-dotnet build src/WinUIDesigner.App/WinUIDesigner.App.csproj -p:Platform=x64
+dotnet build src/FabWinUIDesigner.Document/FabWinUIDesigner.Document.csproj
+dotnet build src/FabWinUIDesigner.CodeGen/FabWinUIDesigner.CodeGen.csproj
+dotnet build src/FabWinUIDesigner.Core/FabWinUIDesigner.Core.csproj -p:Platform=x64
+dotnet build src/FabWinUIDesigner.App/FabWinUIDesigner.App.csproj -p:Platform=x64
 ```
 
 Test projects build/run normally as part of the solution (no platform required):
 
 ```
-dotnet test tests/WinUIDesigner.Document.Tests/WinUIDesigner.Document.Tests.csproj
-dotnet test tests/WinUIDesigner.CodeGen.Tests/WinUIDesigner.CodeGen.Tests.csproj
+dotnet test tests/FabWinUIDesigner.Document.Tests/FabWinUIDesigner.Document.Tests.csproj
+dotnet test tests/FabWinUIDesigner.CodeGen.Tests/FabWinUIDesigner.CodeGen.Tests.csproj
 ```
 
 **Note on `.sln` vs `.slnx`**: `dotnet new sln` on this SDK defaults to the newer `.slnx`
@@ -55,10 +55,10 @@ solution-level build.
 
 ## Running the app
 ```
-dotnet build src/WinUIDesigner.App/WinUIDesigner.App.csproj -p:Platform=x64
-./src/WinUIDesigner.App/bin/x64/Debug/net10.0-windows10.0.19041.0/WinUIDesigner.App.exe
+dotnet build src/FabWinUIDesigner.App/FabWinUIDesigner.App.csproj -p:Platform=x64
+./src/FabWinUIDesigner.App/bin/x64/Debug/net10.0-windows10.0.19041.0/FabWinUIDesigner.App.exe
 ```
-(`dotnet run` also works from inside `src/WinUIDesigner.App` once `Platform` is set, but the
+(`dotnet run` also works from inside `src/FabWinUIDesigner.App` once `Platform` is set, but the
 explicit build + launch above is what was verified during M0.)
 
 ## Package versions pinned so far
