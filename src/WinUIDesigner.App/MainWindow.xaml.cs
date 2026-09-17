@@ -1529,6 +1529,30 @@ public sealed partial class MainWindow : Window
     private void XamlSourceView_LostFocus(object sender, RoutedEventArgs e) => TryApplyXamlSourceEdit();
 
     /// <summary>
+    /// Reformats the current document's XAML with consistent indentation
+    /// (<see cref="XamlDocument.ToFormattedXamlString"/>) and commits it through the exact same
+    /// pipeline any other source edit goes through - not a separate code path, so it's
+    /// undo-tracked and re-validated for free. See research/29-format-document-plan.md.
+    /// </summary>
+    private void FormatDocumentButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_currentDocument is null)
+        {
+            return;
+        }
+
+        // Commit (or reject) whatever's already pending in the box first - formatting around a
+        // stale document, or silently discarding a half-typed edit, would both be surprising.
+        if (!TryApplyXamlSourceEdit())
+        {
+            return;
+        }
+
+        XamlSourceView.Text = _currentDocument.ToFormattedXamlString();
+        TryApplyXamlSourceEdit();
+    }
+
+    /// <summary>
     /// If the XAML source view's text differs from the current document, tries to re-parse it
     /// and, on success, swaps it in as the current document through the same undo-tracked
     /// pipeline every other edit (move, resize, property edit, ...) goes through - not a

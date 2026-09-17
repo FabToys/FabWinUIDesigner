@@ -83,6 +83,35 @@ public class XamlDocumentTests
     }
 
     [TestMethod]
+    public void ToFormattedXamlString_AddsConsistentIndentation()
+    {
+        // Deliberately messy - mirrors the real "elements crammed onto one line" state AddChild
+        // used to produce before it inserted a newline (see research/25); ToFormattedXamlString
+        // should clean this up regardless of how the input got that way.
+        const string messy =
+            "<Page xmlns=\"http://schemas.microsoft.com/winfx/2006/xaml/presentation\" xmlns:x=\"http://schemas.microsoft.com/winfx/2006/xaml\">\n" +
+            "<Canvas Width=\"400\" Height=\"300\"><TextBlock Text=\"A\" /><Button Content=\"B\" />\n" +
+            "    <CheckBox Content=\"C\" /></Canvas>\n" +
+            "</Page>";
+
+        var doc = XamlDocument.Parse(messy);
+        var formatted = doc.ToFormattedXamlString();
+
+        StringAssert.Contains(formatted, "\n    <Canvas");
+        StringAssert.Contains(formatted, "\n        <TextBlock");
+        StringAssert.Contains(formatted, "\n        <Button");
+        StringAssert.Contains(formatted, "\n        <CheckBox");
+
+        // Formatting must only ever change whitespace, never the document's actual content -
+        // unlike AssertSemanticallyEqual (whitespace-sensitive, for the round-trip tests above,
+        // where whitespace differences ARE the thing being checked for), this comparison must
+        // deliberately ignore whitespace, since reformatting it is the whole point here.
+        var expectedNoWhitespace = XDocument.Parse(messy);
+        var actualNoWhitespace = XDocument.Parse(formatted);
+        Assert.IsTrue(XNode.DeepEquals(expectedNoWhitespace, actualNoWhitespace), "Formatting changed the document's actual content, not just its whitespace.");
+    }
+
+    [TestMethod]
     public void SetAttribute_ChangesOnlyTheTargetedAttribute()
     {
         var doc = XamlDocument.Load(SamplePath("SimplePage.xaml"));

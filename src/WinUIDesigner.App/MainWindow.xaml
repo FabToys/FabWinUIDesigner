@@ -126,6 +126,13 @@
 
                 <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="4" Margin="8,8,8,4">
                     <TextBlock Text="XAML Source" FontWeight="Bold" VerticalAlignment="Center" />
+                    <Button
+                        x:Name="FormatDocumentButton"
+                        Click="FormatDocumentButton_Click"
+                        Padding="6,2"
+                        FontSize="11"
+                        Content="Format"
+                        ToolTipService.ToolTip="Reformat the XAML source with consistent indentation (research/29-format-document-plan.md)" />
                     <!-- Collapsed until SetXamlSourceErrors(non-empty) shows it - a second, harder-to-miss
                          cue than the Errors tab alone (see research/23-xaml-error-tabs.md). Clicking it
                          jumps straight to the Errors tab. -->

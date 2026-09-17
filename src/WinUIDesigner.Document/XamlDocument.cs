@@ -51,6 +51,34 @@ public sealed class XamlDocument
         return stringWriter.ToString();
     }
 
+    /// <summary>
+    /// Serializes the document with consistent indentation instead of preserving whatever
+    /// whitespace it already had - for an explicit "Format Document" action, not the normal
+    /// save/round-trip path (which deliberately preserves original formatting - see
+    /// research/01-xml-roundtrip-formatting.md - so opening a file and changing nothing doesn't
+    /// produce a reformat-sized diff). Doesn't wrap a long start tag's attributes one-per-line
+    /// (a plain <see cref="XmlWriter"/> can't do that); see research/29-format-document-plan.md
+    /// for that known, accepted limitation.
+    /// </summary>
+    /// <returns>The document's XAML text, reformatted with consistent indentation.</returns>
+    public string ToFormattedXamlString()
+    {
+        // XmlWriter's auto-indent only kicks in for elements it's free to lay out itself - it
+        // leaves an element's existing (however inconsistent) whitespace text nodes alone rather
+        // than risk corrupting significant mixed content, so writing _xdoc directly (parsed with
+        // LoadOptions.PreserveWhitespace) with Indent=true has no effect at all. Reparsing
+        // ToXamlString()'s output *without* PreserveWhitespace first strips those insignificant
+        // whitespace-only text nodes back out, leaving a "clean" tree the indenter can lay out
+        // from scratch.
+        var stripped = XDocument.Parse(ToXamlString());
+        var stringWriter = new StringWriter();
+        using (var writer = XmlWriter.Create(stringWriter, FormattedWriterSettings))
+        {
+            stripped.Save(writer);
+        }
+        return stringWriter.ToString();
+    }
+
     // No XML declaration (none of the .xaml fixtures/templates carry one) and no line-ending
     // normalization, so an unmodified document round-trips to byte-identical text.
     private static readonly XmlWriterSettings WriterSettings = new()
@@ -58,6 +86,15 @@ public sealed class XamlDocument
         Indent = false,
         OmitXmlDeclaration = true,
         NewLineHandling = NewLineHandling.None,
+        Encoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
+    };
+
+    private static readonly XmlWriterSettings FormattedWriterSettings = new()
+    {
+        Indent = true,
+        IndentChars = "    ",
+        NewLineChars = "\n",
+        OmitXmlDeclaration = true,
         Encoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
     };
 }
