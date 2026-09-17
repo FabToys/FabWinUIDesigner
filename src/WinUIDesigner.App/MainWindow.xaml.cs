@@ -731,13 +731,9 @@ public sealed partial class MainWindow : Window
     /// <summary>
     /// Selects the document's root design element (its first child - typically the root Canvas,
     /// e.g. in SimplePage.xaml) right after loading/creating a document, instead of leaving
-    /// whatever gets selected as a side effect of <see cref="SetXamlSourceText"/> moving the
-    /// caret to the end of the text (which the source->design sync then reads as "select the
-    /// last element" - see research/27-source-design-sync-feedback-loop.md for that same
-    /// mechanism, and research/32-select-root-on-load.md for why it still applied here even
-    /// after that fix). Called after <see cref="RefreshDesignSurfaceFromDocument"/>, so this
-    /// Select() call runs last and its own <see cref="MoveXamlSourceCaretTo"/> is what the caret
-    /// actually ends up at, not end-of-text.
+    /// nothing selected (or, before research/32-select-root-on-load.md's fix, whatever the old
+    /// caret-to-end-of-text side effect happened to land on). Called after
+    /// <see cref="RefreshDesignSurfaceFromDocument"/>.
     /// </summary>
     private void SelectDocumentRoot()
     {
@@ -986,7 +982,6 @@ public sealed partial class MainWindow : Window
 
         UpdateAdornerToMatch(liveElement);
         BuildPropertyGrid(designElement);
-        MoveXamlSourceCaretTo(designElement);
     }
 
     /// <summary>Hides the selection adorner/handles and clears the property grid.</summary>
@@ -1343,76 +1338,15 @@ public sealed partial class MainWindow : Window
     private static string FormatLength(double value) => Math.Round(value, 2).ToString(CultureInfo.InvariantCulture);
 
     /// <summary>
-    /// Moves the XAML source view's caret to the start of the given element's tag, so selecting
-    /// something on the design surface scrolls the source view to it too. Recomputed from a
-    /// fresh, line-info-annotated reparse of the document's own current serialized text on every
-    /// call, rather than relying on line info the original <see cref="XElement"/> may never have
-    /// had (e.g. one created via <see cref="AddControl"/> rather than parsed from text has none)
-    /// - <see cref="XamlDocument.ToXamlString"/> always reflects the live tree, and a fresh
-    /// reparse of exactly that text is always structurally identical to it, so matching by
-    /// document-order position (not by object reference, which wouldn't survive the reparse)
-    /// works reliably.
-    /// </summary>
-    /// <param name="designElement">The now-selected element to locate.</param>
-    private void MoveXamlSourceCaretTo(DesignElement designElement)
-    {
-        // While XamlSourceView_SelectionChanged is driving the selection (the user just placed
-        // the caret themselves), snapping it back to the element's tag start here would fight
-        // their own caret placement - e.g. clicking in the whitespace gap between two elements
-        // would immediately jump the caret back to the preceding element's tag, making it
-        // impossible to ever place the caret *between* elements. The reverse direction (clicking
-        // on the design surface) still wants this - that's the whole point of #22.
-        if (_currentDocument is null || _syncingSelectionFromSource)
-        {
-            return;
-        }
-
-        // Selecting a control is core functionality; jumping the source-pane caret to match is
-        // a convenience on top of it. Isolated in its own try/catch so nothing about this
-        // (reparsing, line-info lookup, or setting SelectionStart on a TextBox that may
-        // currently be Collapsed behind the Errors tab - see research/23-xaml-error-tabs.md) can
-        // ever take the selection itself down with it.
-        try
-        {
-            var index = DocumentOrderIndex(_currentDocument.Root.Element, designElement.Element);
-            if (index < 0)
-            {
-                return;
-            }
-
-            var text = _currentDocument.ToXamlString();
-            var reparsed = XDocument.Parse(text, LoadOptions.SetLineInfo);
-            var target = reparsed.Root?.DescendantsAndSelf().ElementAtOrDefault(index);
-            if (target is not IXmlLineInfo lineInfo || !lineInfo.HasLineInfo())
-            {
-                return;
-            }
-
-            // The Errors tab hides XamlSourceView (Visibility.Collapsed) while it's showing -
-            // setting SelectionStart on a collapsed TextBox isn't meaningful, so only jump the
-            // caret while the Source tab is actually the one visible.
-            if (_xamlPaneTab != XamlPaneTab.Source)
-            {
-                return;
-            }
-
-            XamlSourceView.SelectionStart = OffsetOf(text, lineInfo.LineNumber, lineInfo.LinePosition);
-            XamlSourceView.SelectionLength = 0;
-        }
-        catch (Exception ex)
-        {
-            // Best-effort - failing to jump the caret isn't fatal, and must never break Select().
-            // Logged (not just swallowed) since this has intermittently failed for specific
-            // elements with no identified cause yet - see research/24-control-selection-regression.md.
-            WriteLog($"MoveXamlSourceCaretTo failed for <{designElement.LocalName}>: {ex}");
-        }
-    }
-
-    /// <summary>
-    /// Reverse of <see cref="MoveXamlSourceCaretTo"/>: selects whichever design element the
-    /// source view's caret currently sits on/in, so navigating XAML text also drives the
-    /// design-surface selection. Only acts while the source view's text matches the current
-    /// document exactly (normalizing line endings, same as <see cref="TryApplyXamlSourceEdit"/>)
+    /// Selects whichever design element the source view's caret currently sits on/in, so
+    /// navigating XAML text also drives the design-surface selection - one-directional by
+    /// design (research/33-one-way-caret-sync.md): an earlier version also moved the source
+    /// caret to match whenever a control was selected *on the design surface*, but that made it
+    /// impossible to click in the whitespace gap between two elements without the caret
+    /// immediately snapping back to the preceding tag, and Fabrice found it more disruptive than
+    /// useful in practice - selecting on the design surface no longer touches the source pane's
+    /// caret at all. Only acts while the source view's text matches the current document exactly
+    /// (normalizing line endings, same as <see cref="TryApplyXamlSourceEdit"/>)
     /// - <see cref="Microsoft.UI.Xaml.Controls.TextBox.SelectionChanged"/> fires on every caret
     /// move, including ones caused by typing, so this deliberately does nothing while there's an
     /// uncommitted edit in progress rather than fighting the user's typing with a selection
@@ -1444,24 +1378,15 @@ public sealed partial class MainWindow : Window
             if (actualElement is null || ReferenceEquals(actualElement, _selectedDesignElement?.Element))
             {
                 // Either nothing found, or the caret is still within the already-selected
-                // element - skip the redundant Select() (which would otherwise re-jump the
-                // caret via MoveXamlSourceCaretTo right back to where it already is, on every
-                // single caret move within the same element).
+                // element - skip the redundant Select() (and property-grid rebuild) on every
+                // single caret move within the same element.
                 return;
             }
 
             var entry = _liveToDesign.FirstOrDefault(kvp => ReferenceEquals(kvp.Value.Element, actualElement));
             if (entry.Key is not null)
             {
-                _syncingSelectionFromSource = true;
-                try
-                {
-                    Select(entry.Key, entry.Value);
-                }
-                finally
-                {
-                    _syncingSelectionFromSource = false;
-                }
+                Select(entry.Key, entry.Value);
             }
         }
         catch (Exception ex)
@@ -1503,26 +1428,6 @@ public sealed partial class MainWindow : Window
         }
 
         return bestIndex;
-    }
-
-    /// <summary>Finds <paramref name="target"/>'s zero-based position in <paramref name="root"/>'s pre-order (document-order) element sequence - root itself is position 0.</summary>
-    /// <param name="root">Root to search from.</param>
-    /// <param name="target">Element to find (by reference).</param>
-    /// <returns>The zero-based index, or -1 if not found.</returns>
-    private static int DocumentOrderIndex(XElement root, XElement target)
-    {
-        var index = 0;
-        foreach (var element in root.DescendantsAndSelf())
-        {
-            if (ReferenceEquals(element, target))
-            {
-                return index;
-            }
-
-            index++;
-        }
-
-        return -1;
     }
 
     /// <summary>Converts a 1-based (line, column) position, as reported by <see cref="IXmlLineInfo"/>, to a 0-based character offset into <paramref name="text"/>.</summary>
@@ -1819,9 +1724,6 @@ public sealed partial class MainWindow : Window
 
     private XamlPaneTab _xamlPaneTab = XamlPaneTab.Source;
 
-    /// <summary>True while <see cref="XamlSourceView_SelectionChanged"/> is driving a selection from a user-placed caret - tells <see cref="MoveXamlSourceCaretTo"/> not to fight back and reposition that same caret.</summary>
-    private bool _syncingSelectionFromSource;
-
     /// <summary>Collapses '\r\n' and lone '\r' to '\n', so text that only differs by line-ending style compares as equal.</summary>
     /// <param name="text">Text to normalize.</param>
     /// <returns>The text with all line endings collapsed to '\n'.</returns>
@@ -1954,13 +1856,11 @@ public sealed partial class MainWindow : Window
     /// Sets the XAML source pane's text without touching the caret. Used to move the caret to
     /// the end of the text here, so a change that landed outside the currently-scrolled-into-view
     /// area (e.g. a newly added element, appended near the end) would still scroll into view -
-    /// but that's superseded by #22's <see cref="MoveXamlSourceCaretTo"/>, which every caller
-    /// that actually needs the pane to scroll somewhere specific already triggers afterward
-    /// (via a fresh <see cref="Select"/> call) with a precise target, not just "the end of the
-    /// file". Forcing the caret to the end here instead just fought that: on every full reload
-    /// (e.g. opening a file), it landed on whichever element happened to be last in the
-    /// document, and the source->design caret sync (#25) read that as "select the last
-    /// element" - see research/32-select-root-on-load.md.
+    /// but on every full reload (e.g. opening a file) that instead landed on whichever element
+    /// happened to be last in the document, and the source->design caret sync (#25) read that as
+    /// "select the last element" (research/32-select-root-on-load.md). Removed for good in
+    /// research/33-one-way-caret-sync.md, once design->source caret syncing (the thing this was
+    /// originally for) was removed entirely at Fabrice's request.
     /// </summary>
     /// <param name="text">The XAML text to display.</param>
     private void SetXamlSourceText(string text)
