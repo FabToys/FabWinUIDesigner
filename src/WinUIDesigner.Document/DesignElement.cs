@@ -74,8 +74,24 @@ public sealed class DesignElement
     public DesignElement AddChild(string localName)
     {
         var child = new XElement(Element.Name.Namespace + localName);
-        Element.Add(child);
+        Element.Add(InferChildIndent(), child);
         return new DesignElement(child);
+    }
+
+    /// <summary>
+    /// Finds an existing newline-containing whitespace-only text node between this element's
+    /// current children to reuse for a newly appended one, so it lands on its own line matching
+    /// the surrounding style instead of getting jammed onto the end of the previous line's
+    /// closing tag. Falls back to a plain newline (no indentation) if none is found - e.g. every
+    /// existing child was itself appended without one, before this fix existed.
+    /// </summary>
+    private XText InferChildIndent()
+    {
+        var existing = Element.Nodes()
+            .OfType<XText>()
+            .FirstOrDefault(t => t.Value.Contains('\n') && string.IsNullOrWhiteSpace(t.Value));
+
+        return new XText(existing?.Value ?? "\n");
     }
 
     /// <summary>Removes this element from its parent.</summary>

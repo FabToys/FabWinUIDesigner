@@ -151,6 +151,7 @@
                         IsSpellCheckEnabled="False"
                         IsTextPredictionEnabled="False"
                         LostFocus="XamlSourceView_LostFocus"
+                        SelectionChanged="XamlSourceView_SelectionChanged"
                         ScrollViewer.HorizontalScrollBarVisibility="Auto"
                         ScrollViewer.VerticalScrollBarVisibility="Auto" />
 

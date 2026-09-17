@@ -672,6 +672,11 @@ public sealed partial class MainWindow : Window
             case "Grid":
                 element.SetAttribute("Width", "150");
                 element.SetAttribute("Height", "100");
+                // A Panel with no Background (the default) isn't hit-testable across its empty
+                // area - only actual child content would be, and a freshly-added container has
+                // none yet, making it completely unselectable by clicking inside its bounds.
+                // Transparent is a real (if invisible) brush, so hit-testing still works.
+                element.SetAttribute("Background", "Transparent");
                 break;
         }
     }
@@ -1340,10 +1345,102 @@ public sealed partial class MainWindow : Window
             XamlSourceView.SelectionStart = OffsetOf(text, lineInfo.LineNumber, lineInfo.LinePosition);
             XamlSourceView.SelectionLength = 0;
         }
-        catch (Exception)
+        catch (Exception ex)
         {
             // Best-effort - failing to jump the caret isn't fatal, and must never break Select().
+            // Logged (not just swallowed) since this has intermittently failed for specific
+            // elements with no identified cause yet - see research/24-control-selection-regression.md.
+            WriteLog($"MoveXamlSourceCaretTo failed for <{designElement.LocalName}>: {ex}");
         }
+    }
+
+    /// <summary>
+    /// Reverse of <see cref="MoveXamlSourceCaretTo"/>: selects whichever design element the
+    /// source view's caret currently sits on/in, so navigating XAML text also drives the
+    /// design-surface selection. Only acts while the source view's text matches the current
+    /// document exactly (normalizing line endings, same as <see cref="TryApplyXamlSourceEdit"/>)
+    /// - <see cref="Microsoft.UI.Xaml.Controls.TextBox.SelectionChanged"/> fires on every caret
+    /// move, including ones caused by typing, so this deliberately does nothing while there's an
+    /// uncommitted edit in progress rather than fighting the user's typing with a selection
+    /// rebuild on every keystroke.
+    /// </summary>
+    private void XamlSourceView_SelectionChanged(object sender, RoutedEventArgs e)
+    {
+        if (_currentDocument is null || _xamlPaneTab != XamlPaneTab.Source)
+        {
+            return;
+        }
+
+        try
+        {
+            var text = _currentDocument.ToXamlString();
+            if (NormalizeLineEndings(XamlSourceView.Text) != NormalizeLineEndings(text))
+            {
+                return;
+            }
+
+            var reparsed = XDocument.Parse(text, LoadOptions.SetLineInfo);
+            var index = EnclosingElementIndex(reparsed, text, XamlSourceView.SelectionStart);
+            if (index < 0)
+            {
+                return;
+            }
+
+            var actualElement = _currentDocument.Root.Element.DescendantsAndSelf().ElementAtOrDefault(index);
+            if (actualElement is null || ReferenceEquals(actualElement, _selectedDesignElement?.Element))
+            {
+                // Either nothing found, or the caret is still within the already-selected
+                // element - skip the redundant Select() (which would otherwise re-jump the
+                // caret via MoveXamlSourceCaretTo right back to where it already is, on every
+                // single caret move within the same element).
+                return;
+            }
+
+            var entry = _liveToDesign.FirstOrDefault(kvp => ReferenceEquals(kvp.Value.Element, actualElement));
+            if (entry.Key is not null)
+            {
+                Select(entry.Key, entry.Value);
+            }
+        }
+        catch (Exception ex)
+        {
+            // Best-effort - a hiccup here must never disrupt normal typing/editing.
+            WriteLog($"XamlSourceView_SelectionChanged failed: {ex}");
+        }
+    }
+
+    /// <summary>Finds the document-order index of whichever element's start tag is closest at-or-before <paramref name="caretOffset"/> - i.e. the innermost element the caret is currently on/in, approximating by "most recently opened tag" since none of the MVP's controls have separate closing tags to bound the other end.</summary>
+    /// <param name="reparsed">A line-info-annotated reparse of <paramref name="text"/>.</param>
+    /// <param name="text">The text <paramref name="reparsed"/> was parsed from.</param>
+    /// <param name="caretOffset">0-based character offset of the caret.</param>
+    /// <returns>The zero-based document-order index of the enclosing element, or -1 if none starts at or before the caret.</returns>
+    private static int EnclosingElementIndex(XDocument reparsed, string text, int caretOffset)
+    {
+        if (reparsed.Root is null)
+        {
+            return -1;
+        }
+
+        var bestIndex = -1;
+        var bestOffset = -1;
+        var index = 0;
+
+        foreach (var element in reparsed.Root.DescendantsAndSelf())
+        {
+            if (element is IXmlLineInfo lineInfo && lineInfo.HasLineInfo())
+            {
+                var elementOffset = OffsetOf(text, lineInfo.LineNumber, lineInfo.LinePosition);
+                if (elementOffset <= caretOffset && elementOffset > bestOffset)
+                {
+                    bestOffset = elementOffset;
+                    bestIndex = index;
+                }
+            }
+
+            index++;
+        }
+
+        return bestIndex;
     }
 
     /// <summary>Finds <paramref name="target"/>'s zero-based position in <paramref name="root"/>'s pre-order (document-order) element sequence - root itself is position 0.</summary>
