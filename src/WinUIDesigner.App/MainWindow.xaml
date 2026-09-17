@@ -120,23 +120,53 @@
             <Grid Grid.Row="2">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
-                <TextBlock Grid.Row="0" Text="XAML Source" FontWeight="Bold" Margin="8,8,8,4" />
-                <TextBlock x:Name="XamlSourceErrorText" Grid.Row="1" Foreground="Red" TextWrapping="Wrap" FontSize="11" Margin="8,0,8,4" Visibility="Collapsed" />
-                <TextBox
-                    x:Name="XamlSourceView"
-                    Grid.Row="2"
-                    AcceptsReturn="True"
-                    TextWrapping="NoWrap"
-                    FontFamily="Consolas"
-                    Margin="8"
-                    IsSpellCheckEnabled="False"
-                    IsTextPredictionEnabled="False"
-                    LostFocus="XamlSourceView_LostFocus"
-                    ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                    ScrollViewer.VerticalScrollBarVisibility="Auto" />
+
+                <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="4" Margin="8,8,8,4">
+                    <TextBlock Text="XAML Source" FontWeight="Bold" VerticalAlignment="Center" />
+                    <!-- Collapsed until SetXamlSourceError(non-null) shows it - a second, harder-to-miss
+                         cue than the Errors tab alone (see research/23-xaml-error-tabs.md). Clicking it
+                         jumps straight to the Errors tab. -->
+                    <Button
+                        x:Name="XamlSourceWarningButton"
+                        Click="XamlSourceWarningButton_Click"
+                        Visibility="Collapsed"
+                        Padding="2"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        ToolTipService.ToolTip="This document has a XAML error - see the Errors tab">
+                        <FontIcon Glyph="&#xE783;" Foreground="Red" FontSize="14" />
+                    </Button>
+                </StackPanel>
+
+                <Grid Grid.Row="1">
+                    <TextBox
+                        x:Name="XamlSourceView"
+                        AcceptsReturn="True"
+                        TextWrapping="NoWrap"
+                        FontFamily="Consolas"
+                        Margin="8"
+                        IsSpellCheckEnabled="False"
+                        IsTextPredictionEnabled="False"
+                        LostFocus="XamlSourceView_LostFocus"
+                        ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                        ScrollViewer.VerticalScrollBarVisibility="Auto" />
+
+                    <ScrollViewer x:Name="XamlErrorsPanel" Visibility="Collapsed" Margin="8">
+                        <TextBlock x:Name="XamlErrorsText" Foreground="Red" TextWrapping="Wrap" FontFamily="Consolas" />
+                    </ScrollViewer>
+                </Grid>
+
+                <!-- Tab strip goes BELOW its content (Fabrice's ask), unlike a normal top-tabbed
+                     control - WinUI's TabView always puts headers on top with no supported way to
+                     move them, so this is two plain Buttons with manually managed selected/error
+                     styling (UpdateXamlPaneTabButtonVisuals) rather than a real tab control. -->
+                <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="1" BorderBrush="Gray" BorderThickness="0,1,0,0">
+                    <Button x:Name="SourceTabButton" Content="Source" Click="SourceTabButton_Click" Padding="12,4" CornerRadius="0" BorderThickness="0" />
+                    <Button x:Name="ErrorsTabButton" Content="Errors" Click="ErrorsTabButton_Click" Padding="12,4" CornerRadius="0" BorderThickness="0" IsEnabled="False" />
+                </StackPanel>
             </Grid>
         </Grid>
 

@@ -1,5 +1,6 @@
 using Microsoft.UI;
 using Microsoft.UI.Input;
+using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
@@ -16,6 +17,7 @@ using Windows.Graphics.Imaging;
 using Windows.Storage;
 using Windows.Storage.Pickers;
 using Windows.System;
+using Windows.UI;
 using Windows.UI.Core;
 using WinUIDesigner.Core;
 using DesignElement = WinUIDesigner.Document.DesignElement;
@@ -128,6 +130,8 @@ public sealed partial class MainWindow : Window
 
         LoadRecentLists();
         RefreshRecentMenu();
+
+        UpdateXamlPaneTabButtonVisuals();
     }
 
     /// <summary>A blank single-Canvas Page, same shape as the sample fixtures minus x:Class (a brand-new file has no code-behind yet).</summary>
@@ -1435,12 +1439,80 @@ public sealed partial class MainWindow : Window
         return true;
     }
 
-    /// <summary>Shows or hides the inline XAML-source error message.</summary>
-    /// <param name="message">Error text to show, or null to hide the error.</param>
+    /// <summary>Which of the two bottom-tab panels the XAML pane is currently showing.</summary>
+    private enum XamlPaneTab
+    {
+        Source,
+        Errors,
+    }
+
+    private XamlPaneTab _xamlPaneTab = XamlPaneTab.Source;
+
+    /// <summary>
+    /// Updates the Errors tab/warning-icon with the current error (or clears it). Deliberately
+    /// does not auto-switch to the Errors tab on a new error - the user is usually mid-edit in
+    /// the Source tab when an error appears (their cursor and typed text are right there), and
+    /// yanking that away would be worse than just making the Errors tab and warning icon turn
+    /// red so it's noticeable without being disruptive. If the Errors tab happens to already be
+    /// showing when the error clears, switches back to Source since there's nothing left to show.
+    /// </summary>
+    /// <param name="message">Error text to show, or null to clear the error.</param>
     private void SetXamlSourceError(string? message)
     {
-        XamlSourceErrorText.Text = message ?? string.Empty;
-        XamlSourceErrorText.Visibility = message is null ? Visibility.Collapsed : Visibility.Visible;
+        XamlErrorsText.Text = message ?? string.Empty;
+
+        var hasError = message is not null;
+        ErrorsTabButton.IsEnabled = hasError;
+        XamlSourceWarningButton.Visibility = hasError ? Visibility.Visible : Visibility.Collapsed;
+
+        if (!hasError && _xamlPaneTab == XamlPaneTab.Errors)
+        {
+            ShowXamlPaneTab(XamlPaneTab.Source);
+        }
+        else
+        {
+            UpdateXamlPaneTabButtonVisuals();
+        }
+    }
+
+    private void SourceTabButton_Click(object sender, RoutedEventArgs e) => ShowXamlPaneTab(XamlPaneTab.Source);
+
+    private void ErrorsTabButton_Click(object sender, RoutedEventArgs e) => ShowXamlPaneTab(XamlPaneTab.Errors);
+
+    /// <summary>Jumps straight to the Errors tab - the warning icon next to the "XAML Source" header is a shortcut for this.</summary>
+    private void XamlSourceWarningButton_Click(object sender, RoutedEventArgs e) => ShowXamlPaneTab(XamlPaneTab.Errors);
+
+    /// <summary>Switches which of the Source/Errors panels is visible and updates the tab buttons to match.</summary>
+    /// <param name="tab">The panel to show.</param>
+    private void ShowXamlPaneTab(XamlPaneTab tab)
+    {
+        _xamlPaneTab = tab;
+        XamlSourceView.Visibility = tab == XamlPaneTab.Source ? Visibility.Visible : Visibility.Collapsed;
+        XamlErrorsPanel.Visibility = tab == XamlPaneTab.Errors ? Visibility.Visible : Visibility.Collapsed;
+        UpdateXamlPaneTabButtonVisuals();
+    }
+
+    /// <summary>
+    /// Styles the two tab buttons: the selected one is bold with a highlighted background; the
+    /// Errors button also turns red (text + background tint) whenever there's an error, whether
+    /// or not it's the one currently selected, so it stays attention-grabbing while the user is
+    /// still looking at the Source tab - being "selected" and "has an error" are independent,
+    /// unlike a normal tab control's single active/inactive state.
+    /// </summary>
+    private void UpdateXamlPaneTabButtonVisuals()
+    {
+        var hasError = ErrorsTabButton.IsEnabled;
+
+        SourceTabButton.FontWeight = _xamlPaneTab == XamlPaneTab.Source ? FontWeights.Bold : FontWeights.Normal;
+        SourceTabButton.Background = _xamlPaneTab == XamlPaneTab.Source
+            ? new SolidColorBrush(Colors.White)
+            : new SolidColorBrush(Colors.Transparent);
+
+        ErrorsTabButton.FontWeight = _xamlPaneTab == XamlPaneTab.Errors ? FontWeights.Bold : FontWeights.Normal;
+        ErrorsTabButton.Background = _xamlPaneTab == XamlPaneTab.Errors
+            ? new SolidColorBrush(hasError ? Color.FromArgb(255, 253, 231, 233) : Colors.White)
+            : new SolidColorBrush(Colors.Transparent);
+        ErrorsTabButton.Foreground = new SolidColorBrush(hasError ? Colors.Red : Colors.Black);
     }
 
     /// <summary>Call right before a mutation starts. Paired with <see cref="CommitUndoableChange"/>.</summary>
