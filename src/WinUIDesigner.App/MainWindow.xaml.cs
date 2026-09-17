@@ -176,6 +176,7 @@ public sealed partial class MainWindow : Window
         _lastSavedXaml = doc.ToXamlString();
 
         RefreshDesignSurfaceFromDocument();
+        SelectDocumentRoot();
         UpdateSaveButtonState();
     }
 
@@ -489,6 +490,7 @@ public sealed partial class MainWindow : Window
             _lastSavedXaml = doc.ToXamlString();
 
             RefreshDesignSurfaceFromDocument();
+            SelectDocumentRoot();
             AddRecentFile(path);
         }
         catch (Exception ex)
@@ -720,6 +722,37 @@ public sealed partial class MainWindow : Window
     private void SelectByName(string name)
     {
         var entry = _liveToDesign.FirstOrDefault(kvp => kvp.Value.Name == name);
+        if (entry.Key is not null)
+        {
+            Select(entry.Key, entry.Value);
+        }
+    }
+
+    /// <summary>
+    /// Selects the document's root design element (its first child - typically the root Canvas,
+    /// e.g. in SimplePage.xaml) right after loading/creating a document, instead of leaving
+    /// whatever gets selected as a side effect of <see cref="SetXamlSourceText"/> moving the
+    /// caret to the end of the text (which the source->design sync then reads as "select the
+    /// last element" - see research/27-source-design-sync-feedback-loop.md for that same
+    /// mechanism, and research/32-select-root-on-load.md for why it still applied here even
+    /// after that fix). Called after <see cref="RefreshDesignSurfaceFromDocument"/>, so this
+    /// Select() call runs last and its own <see cref="MoveXamlSourceCaretTo"/> is what the caret
+    /// actually ends up at, not end-of-text.
+    /// </summary>
+    private void SelectDocumentRoot()
+    {
+        if (_currentDocument is null)
+        {
+            return;
+        }
+
+        var rootDesignElement = _currentDocument.Root.Children.FirstOrDefault();
+        if (rootDesignElement is null)
+        {
+            return;
+        }
+
+        var entry = _liveToDesign.FirstOrDefault(kvp => ReferenceEquals(kvp.Value.Element, rootDesignElement.Element));
         if (entry.Key is not null)
         {
             Select(entry.Key, entry.Value);
@@ -1918,17 +1951,21 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Setting TextBox.Text from code doesn't move the caret/scroll position, so a change that
-    /// lands outside the currently-scrolled-into-view area (e.g. a newly added element, which
-    /// is appended near the end) can look like "nothing happened" even though the text really
-    /// did update. Moving the caret to the end scrolls it into view.
+    /// Sets the XAML source pane's text without touching the caret. Used to move the caret to
+    /// the end of the text here, so a change that landed outside the currently-scrolled-into-view
+    /// area (e.g. a newly added element, appended near the end) would still scroll into view -
+    /// but that's superseded by #22's <see cref="MoveXamlSourceCaretTo"/>, which every caller
+    /// that actually needs the pane to scroll somewhere specific already triggers afterward
+    /// (via a fresh <see cref="Select"/> call) with a precise target, not just "the end of the
+    /// file". Forcing the caret to the end here instead just fought that: on every full reload
+    /// (e.g. opening a file), it landed on whichever element happened to be last in the
+    /// document, and the source->design caret sync (#25) read that as "select the last
+    /// element" - see research/32-select-root-on-load.md.
     /// </summary>
     /// <param name="text">The XAML text to display.</param>
     private void SetXamlSourceText(string text)
     {
         XamlSourceView.Text = text;
-        XamlSourceView.SelectionStart = text.Length;
-        XamlSourceView.SelectionLength = 0;
         UpdateSaveButtonState();
     }
 
