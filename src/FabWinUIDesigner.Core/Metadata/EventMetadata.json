@@ -1,0 +1,15 @@
+{
+  "Button": [
+    { "Name": "Click", "Category": "Action" }
+  ],
+  "CheckBox": [
+    { "Name": "Checked", "Category": "Action" },
+    { "Name": "Unchecked", "Category": "Action" }
+  ],
+  "TextBox": [
+    { "Name": "TextChanged", "Category": "Text" }
+  ],
+  "ComboBox": [
+    { "Name": "SelectionChanged", "Category": "Selection" }
+  ]
+}

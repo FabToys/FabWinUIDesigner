@@ -13,18 +13,11 @@
             <ColumnDefinition Width="260" />
         </Grid.ColumnDefinitions>
 
-        <!-- Toolbox -->
+        <!-- Toolbox - items are built in code (MainWindow.BuildToolbox) from PropertyGridSchema.ToolboxControlTypes, itself read from Metadata/PropertyMetadata.json (research/47), instead of one hardcoded Button per control type here. -->
         <Border Grid.Column="0" BorderBrush="Gray" BorderThickness="0,0,1,0">
             <StackPanel Padding="8" Spacing="4">
                 <TextBlock Text="Toolbox" FontWeight="Bold" Margin="0,0,0,8" />
-                <Button Content="Button" Tag="Button" Click="ToolboxItem_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Background="Transparent" BorderThickness="0" Padding="4,6" />
-                <Button Content="TextBlock" Tag="TextBlock" Click="ToolboxItem_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Background="Transparent" BorderThickness="0" Padding="4,6" />
-                <Button Content="TextBox" Tag="TextBox" Click="ToolboxItem_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Background="Transparent" BorderThickness="0" Padding="4,6" />
-                <Button Content="CheckBox" Tag="CheckBox" Click="ToolboxItem_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Background="Transparent" BorderThickness="0" Padding="4,6" />
-                <Button Content="ComboBox" Tag="ComboBox" Click="ToolboxItem_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Background="Transparent" BorderThickness="0" Padding="4,6" />
-                <Button Content="Image" Tag="Image" Click="ToolboxItem_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Background="Transparent" BorderThickness="0" Padding="4,6" />
-                <Button Content="StackPanel" Tag="StackPanel" Click="ToolboxItem_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Background="Transparent" BorderThickness="0" Padding="4,6" />
-                <Button Content="Grid" Tag="Grid" Click="ToolboxItem_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Background="Transparent" BorderThickness="0" Padding="4,6" />
+                <StackPanel x:Name="ToolboxItemsPanel" Spacing="4" />
             </StackPanel>
         </Border>
 

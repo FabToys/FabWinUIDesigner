@@ -106,6 +106,8 @@ public sealed partial class MainWindow : Window
         InitializeComponent();
         Title = "FabWinUI Designer";
 
+        BuildToolbox();
+
         LoadPanelLayout();
         AttachColumnSplitter(ToolboxSplitter, ToolboxColumn, minWidth: 100, maxWidth: 400, SavePanelLayout);
         // invert:true here - XamlSourceRow is the row *after* this splitter (DesignSurfaceRow,
@@ -672,6 +674,32 @@ public sealed partial class MainWindow : Window
         File.AppendAllText(SpikeLogPath, contents + Environment.NewLine);
     }
 
+    /// <summary>
+    /// Populates the Toolbox from <see cref="PropertyGridSchema.ToolboxControlTypes"/> - the same
+    /// JSON file that drives the property grid (research/47), so adding a control type to the
+    /// app means editing one file instead of also hand-adding a XAML `Button` here.
+    /// </summary>
+    private void BuildToolbox()
+    {
+        ToolboxItemsPanel.Children.Clear();
+
+        foreach (var controlTypeName in PropertyGridSchema.ToolboxControlTypes)
+        {
+            var button = new Button
+            {
+                Content = controlTypeName,
+                Tag = controlTypeName,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Left,
+                Background = new SolidColorBrush(Colors.Transparent),
+                BorderThickness = new Thickness(0),
+                Padding = new Thickness(4, 6, 4, 6),
+            };
+            button.Click += ToolboxItem_Click;
+            ToolboxItemsPanel.Children.Add(button);
+        }
+    }
+
     /// <summary>Adds a control of the type named by the clicked toolbox item's <c>Tag</c>.</summary>
     private void ToolboxItem_Click(object sender, RoutedEventArgs e)
     {
@@ -1165,45 +1193,27 @@ public sealed partial class MainWindow : Window
         RefreshDesignSurfaceFromDocument();
     }
 
-    /// <summary>Two-column name/value layout, matching the WPF/WinForms Properties window.</summary>
+    /// <summary>Display order for property-grid categories (research/46) - anything from the JSON not listed here falls back to alphabetical, after these.</summary>
+    private static readonly string[] PropertyCategoryOrder = ["Common Properties", "Text", "Layout", "Appearance"];
+
+    /// <summary>Display order for the Events tab's categories (research/46).</summary>
+    private static readonly string[] EventCategoryOrder = ["Action", "Text", "Selection"];
+
+    /// <summary>Two-column name/value layout grouped by category, matching the WPF/WinForms Properties window.</summary>
     /// <param name="designElement">The selected element whose curated properties (per <see cref="PropertyGridSchema"/>) to show editors for.</param>
     private void BuildPropertyGrid(DesignElement designElement)
     {
-        PropertyGridPanel.Children.Clear();
-
-        // Column 0 = fixed-width labels, column 1 = editors that stretch to fill the rest.
-        var grid = new Grid();
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(90) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-
-        // One row per property this element type has (per PropertyGridSchema's curated list -
-        // WinUI controls don't expose design-time attributes to discover this via reflection).
         var descriptors = PropertyGridSchema.GetProperties(designElement.LocalName);
-        for (var row = 0; row < descriptors.Count; row++)
-        {
-            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        var liveType = _selectedLiveElement?.GetType();
 
-            var descriptor = descriptors[row];
+        BuildCategorizedGrid(
+            PropertyGridPanel,
+            descriptors,
+            PropertyCategoryOrder,
+            getName: d => d.Name,
+            getCategory: d => d.Category,
+            createEditor: d => CreatePropertyEditor(designElement, d, liveType));
 
-            var label = new TextBlock
-            {
-                Text = descriptor.Name,
-                FontSize = 12,
-                Margin = new Thickness(0, 0, 6, 6),
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            Grid.SetRow(label, row);
-            Grid.SetColumn(label, 0);
-            grid.Children.Add(label);
-
-            var editor = CreatePropertyEditor(designElement, descriptor);
-            editor.Margin = new Thickness(0, 0, 0, 6);
-            Grid.SetRow(editor, row);
-            Grid.SetColumn(editor, 1);
-            grid.Children.Add(editor);
-        }
-
-        PropertyGridPanel.Children.Add(grid);
         BuildEventsGrid(designElement);
     }
 
@@ -1219,58 +1229,191 @@ public sealed partial class MainWindow : Window
     /// <param name="designElement">The selected element to show events for.</param>
     private void BuildEventsGrid(DesignElement designElement)
     {
-        EventGridPanel.Children.Clear();
-
         var descriptors = EventGridSchema.GetEvents(designElement.LocalName);
         if (descriptors.Count == 0)
         {
+            EventGridPanel.Children.Clear();
             EventGridPanel.Children.Add(new TextBlock { Text = "(no events)", Foreground = new SolidColorBrush(Colors.Gray) });
             return;
         }
 
-        var grid = new Grid();
+        BuildCategorizedGrid(
+            EventGridPanel,
+            descriptors,
+            EventCategoryOrder,
+            getName: d => d.Name,
+            getCategory: d => d.Category,
+            createEditor: d => CreateEventEditor(designElement, d));
+    }
+
+    /// <summary>
+    /// Shared Properties/Events grid builder (research/46): groups <paramref name="descriptors"/>
+    /// under a bold category header row per distinct <c>Category</c> - the WPF-style "Arrange by
+    /// Category" view from Fabrice's screenshot, minus a togglable raw/alphabetical view (not
+    /// asked for yet, same "note, don't build" treatment as research 08/14). Categories in
+    /// <paramref name="categoryOrder"/> are shown first in that order; any other category found in
+    /// the data (e.g. a typo'd JSON value) still shows, alphabetically, after - so a bad category
+    /// name is visible instead of silently dropping properties.
+    /// </summary>
+    /// <typeparam name="TDescriptor"><see cref="PropertyDescriptor"/> or <see cref="EventDescriptor"/>.</typeparam>
+    private static void BuildCategorizedGrid<TDescriptor>(
+        Panel targetPanel,
+        IReadOnlyList<TDescriptor> descriptors,
+        string[] categoryOrder,
+        Func<TDescriptor, string> getName,
+        Func<TDescriptor, string> getCategory,
+        Func<TDescriptor, FrameworkElement> createEditor)
+    {
+        targetPanel.Children.Clear();
+        if (descriptors.Count == 0)
+        {
+            return;
+        }
+
+        var orderedCategories = categoryOrder
+            .Where(category => descriptors.Any(d => getCategory(d) == category))
+            .Concat(descriptors.Select(getCategory).Distinct().Except(categoryOrder).OrderBy(c => c, StringComparer.Ordinal))
+            .ToList();
+
+        var rowCount = orderedCategories.Count + descriptors.Count; // one extra header row per category
+        var grid = BuildGridLinesGrid(rowCount, out var gridLineBrush);
+
+        var row = 0;
+        foreach (var category in orderedCategories)
+        {
+            AddCategoryHeaderCell(grid, category, row, gridLineBrush);
+            row++;
+
+            foreach (var descriptor in descriptors.Where(d => getCategory(d) == category))
+            {
+                var isLastRow = row == rowCount - 1;
+
+                var label = new TextBlock { Text = getName(descriptor), VerticalAlignment = VerticalAlignment.Center };
+                AddGridCell(grid, label, row, column: 0, gridLineBrush, isLastRow);
+
+                var editor = createEditor(descriptor);
+                AddGridCell(grid, editor, row, column: 1, gridLineBrush, isLastRow);
+
+                row++;
+            }
+        }
+
+        targetPanel.Children.Add(grid);
+    }
+
+    /// <summary>
+    /// Creates the shared two-column grid shell (label column fixed at 90px, editor column
+    /// stretches) used by both the Properties and Events tabs, with a light gray outer border -
+    /// row/column divider lines are added per-cell by <see cref="AddGridCell"/>, matching the
+    /// visible gridlines of a WinForms <c>PropertyGrid</c> (Fabrice's ask - the previous plain
+    /// spacing-only layout had no visible row/column separators).
+    /// </summary>
+    /// <param name="rowCount">Total rows the grid will hold, including category header rows.</param>
+    /// <param name="gridLineBrush">Outputs the brush used for the divider lines, so callers add cells with a matching color.</param>
+    /// <returns>An empty <see cref="Grid"/> with its outer border, rows, and columns already set up - cells are added by <see cref="AddGridCell"/>/<see cref="AddCategoryHeaderCell"/>.</returns>
+    private static Grid BuildGridLinesGrid(int rowCount, out SolidColorBrush gridLineBrush)
+    {
+        gridLineBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0xD5, 0xD5, 0xD5));
+
+        var grid = new Grid
+        {
+            BorderBrush = gridLineBrush,
+            BorderThickness = new Thickness(1, 1, 1, rowCount > 0 ? 0 : 1),
+        };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(90) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-        for (var row = 0; row < descriptors.Count; row++)
+        for (var row = 0; row < rowCount; row++)
         {
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-
-            var descriptor = descriptors[row];
-
-            var label = new TextBlock
-            {
-                Text = descriptor.Name,
-                FontSize = 12,
-                Margin = new Thickness(0, 0, 6, 6),
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            Grid.SetRow(label, row);
-            Grid.SetColumn(label, 0);
-            grid.Children.Add(label);
-
-            var editor = CreateEventEditor(designElement, descriptor);
-            editor.Margin = new Thickness(0, 0, 0, 6);
-            Grid.SetRow(editor, row);
-            Grid.SetColumn(editor, 1);
-            grid.Children.Add(editor);
         }
 
-        EventGridPanel.Children.Add(grid);
+        return grid;
     }
 
-    /// <summary>Creates the property grid's editor control for one property - a <see cref="CheckBox"/>, <see cref="ComboBox"/>, or plain <see cref="TextBox"/> depending on the descriptor's kind - wired to call <see cref="ApplyPropertyEdit"/> when its value changes.</summary>
+    /// <summary>Font size used throughout the Properties/Events grids - smaller than controls' 14px default, matching the compact look of a WinForms <c>PropertyGrid</c>.</summary>
+    private const double GridCellFontSize = 11;
+
+    /// <summary>Adds one category header row (bold label, light gray background, spans both columns) - the group separators from Fabrice's WPF Properties-window screenshot.</summary>
+    private static void AddCategoryHeaderCell(Grid grid, string category, int row, SolidColorBrush gridLineBrush)
+    {
+        var header = new TextBlock
+        {
+            Text = category,
+            FontSize = GridCellFontSize,
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(6, 2, 6, 2),
+        };
+
+        var cell = new Border
+        {
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0xF0, 0xF0, 0xF0)),
+            BorderBrush = gridLineBrush,
+            BorderThickness = new Thickness(0, 0, 0, 1),
+            Child = header,
+        };
+        Grid.SetRow(cell, row);
+        Grid.SetColumnSpan(cell, 2);
+        grid.Children.Add(cell);
+    }
+
+    /// <summary>
+    /// Wraps one property/event grid cell's content in a bordered <see cref="Border"/> so every
+    /// row gets a bottom divider line and the label column gets a right divider line (the last
+    /// row skips its bottom line since the grid's own outer border already supplies it). Also
+    /// shrinks whichever control was passed in to the compact row height of a VS Properties
+    /// window (Fabrice's ask) - editors (<see cref="TextBox"/>/<see cref="ComboBox"/>/
+    /// <see cref="CheckBox"/>) and the row labels (<see cref="TextBlock"/>) don't share a common
+    /// "has FontSize/Padding" base, so this is a switch rather than one assignment.
+    /// </summary>
+    private static void AddGridCell(Grid grid, FrameworkElement content, int row, int column, SolidColorBrush gridLineBrush, bool isLastRow)
+    {
+        var rightLine = column == 0 ? 1 : 0;
+        var bottomLine = isLastRow ? 0 : 1;
+
+        content.VerticalAlignment = VerticalAlignment.Center;
+        content.Margin = new Thickness(6, 1, 6, 1);
+
+        switch (content)
+        {
+            // WinUI's default Control padding/MinHeight (TextBox/ComboBox: ~32px tall) is what
+            // was making rows so much taller than VS's Properties window - trimming both here is
+            // what actually shrinks the row, FontSize alone barely changes it.
+            case Control control:
+                control.FontSize = GridCellFontSize;
+                control.Padding = new Thickness(6, 2, 6, 2);
+                control.MinHeight = 24;
+                break;
+            case TextBlock textBlock:
+                textBlock.FontSize = GridCellFontSize;
+                break;
+        }
+
+        var cell = new Border
+        {
+            BorderBrush = gridLineBrush,
+            BorderThickness = new Thickness(0, 0, rightLine, bottomLine),
+            Child = content,
+        };
+        Grid.SetRow(cell, row);
+        Grid.SetColumn(cell, column);
+        grid.Children.Add(cell);
+    }
+
+    /// <summary>Creates the property grid's editor control for one property - a <see cref="CheckBox"/>, <see cref="ComboBox"/>, or plain <see cref="TextBox"/> depending on the property's live CLR type (<see cref="PropertyKindResolver"/>, research/46) - wired to call <see cref="ApplyPropertyEdit"/> when its value changes.</summary>
     /// <param name="designElement">The selected element the property belongs to.</param>
-    /// <param name="descriptor">Describes the property's name and editor kind.</param>
+    /// <param name="descriptor">Describes the property's name and category.</param>
+    /// <param name="liveType">The selected live element's CLR type, used to reflect the actual property and so its editor kind - <c>null</c> falls back to a plain text editor (nothing selected).</param>
     /// <returns>The editor control, ready to place in the property grid.</returns>
-    private FrameworkElement CreatePropertyEditor(DesignElement designElement, PropertyDescriptor descriptor)
+    private FrameworkElement CreatePropertyEditor(DesignElement designElement, PropertyDescriptor descriptor, Type? liveType)
     {
         var currentText = designElement.GetAttribute(descriptor.Name) ?? string.Empty;
+        var (kind, enumValues) = PropertyKindResolver.Resolve(liveType?.GetProperty(descriptor.Name));
 
         // Bool -> CheckBox, Enum -> ComboBox of its named values, everything else -> a plain
         // TextBox (numbers, colors, thicknesses, ... are all typed as free text and parsed in
         // ApplyPropertyEdit, same as they'd appear in real XAML).
-        switch (descriptor.Kind)
+        switch (kind)
         {
             case PropertyEditorKind.Bool:
             {
@@ -1282,7 +1425,7 @@ public sealed partial class MainWindow : Window
 
             case PropertyEditorKind.Enum:
             {
-                var values = descriptor.EnumValues ?? [];
+                var values = enumValues ?? [];
                 var combo = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch, ItemsSource = values };
                 combo.SelectedItem = values.FirstOrDefault(v => string.Equals(v, currentText, StringComparison.OrdinalIgnoreCase)) ?? values.FirstOrDefault();
                 combo.SelectionChanged += (_, _) =>
@@ -1313,7 +1456,7 @@ public sealed partial class MainWindow : Window
     /// the field's own text as typed rather than reverting or throwing.
     /// </summary>
     /// <param name="designElement">The selected element whose attribute to update.</param>
-    /// <param name="descriptor">Describes the property's name and value kind (number, bool, enum, brush, thickness, or plain text).</param>
+    /// <param name="descriptor">Describes the property's name and category.</param>
     /// <param name="rawText">The editor's current text/value, as typed or selected.</param>
     private void ApplyPropertyEdit(DesignElement designElement, PropertyDescriptor descriptor, string rawText)
     {
@@ -1328,10 +1471,12 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        var (kind, _) = PropertyKindResolver.Resolve(propertyInfo);
+
         object? liveValue;
         string attributeText;
 
-        switch (descriptor.Kind)
+        switch (kind)
         {
             case PropertyEditorKind.Number:
                 if (rawText.Trim().Length == 0)
