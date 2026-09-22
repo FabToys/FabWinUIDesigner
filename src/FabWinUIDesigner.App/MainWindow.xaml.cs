@@ -45,6 +45,11 @@ public sealed partial class MainWindow : Window
     private const double MinElementSize = 8;
     private const double HandleSize = 7;
 
+    // Snap-to-grid (research/48-snap-to-grid.md). Spacing isn't user-configurable yet - noted as
+    // a follow-up, not built, same as research/14's original sketch left it undecided.
+    private const double GridSpacing = 8;
+    private bool _snapToGridEnabled;
+
     private string? _currentFilePath;
     private XamlDocument? _currentDocument;
     private IReadOnlyDictionary<UIElement, DesignElement> _liveToDesign = new Dictionary<UIElement, DesignElement>();
@@ -109,6 +114,14 @@ public sealed partial class MainWindow : Window
         BuildToolbox();
 
         LoadPanelLayout();
+        SnapToGridToggle.IsChecked = _snapToGridEnabled;
+        DesignSurfaceHost.SizeChanged += (_, _) =>
+        {
+            GridOverlay.Width = DesignSurfaceHost.ActualWidth;
+            GridOverlay.Height = DesignSurfaceHost.ActualHeight;
+            RenderGridOverlay();
+        };
+
         AttachColumnSplitter(ToolboxSplitter, ToolboxColumn, minWidth: 100, maxWidth: 400, SavePanelLayout);
         // invert:true here - XamlSourceRow is the row *after* this splitter (DesignSurfaceRow,
         // splitter, XamlSourceRow), so dragging up should grow it, unlike FilePropertiesSplitter
@@ -932,8 +945,8 @@ public sealed partial class MainWindow : Window
         }
 
         var point = e.GetCurrentPoint(DesignSurfaceHost).Position;
-        var newLeft = _moveStartLeft + (point.X - _moveStartPointerPosition.X);
-        var newTop = _moveStartTop + (point.Y - _moveStartPointerPosition.Y);
+        var newLeft = Snap(_moveStartLeft + (point.X - _moveStartPointerPosition.X));
+        var newTop = Snap(_moveStartTop + (point.Y - _moveStartPointerPosition.Y));
 
         Canvas.SetLeft(_moveElement, newLeft);
         Canvas.SetTop(_moveElement, newTop);
@@ -1008,12 +1021,57 @@ public sealed partial class MainWindow : Window
         var (newLeft, newTop, newWidth, newHeight) = ApplyResize(
             _resizeDirection, _resizeStartLeft, _resizeStartTop, _resizeStartWidth, _resizeStartHeight, deltaX, deltaY);
 
+        // Snapping wraps ApplyResize's result rather than its math, so that pure function stays
+        // unaffected (and its own MSTest cases don't need to know about snapping at all).
+        newLeft = Snap(newLeft);
+        newTop = Snap(newTop);
+        newWidth = Snap(newWidth);
+        newHeight = Snap(newHeight);
+
         Canvas.SetLeft(resizing, newLeft);
         Canvas.SetTop(resizing, newTop);
         resizing.Width = newWidth;
         resizing.Height = newHeight;
 
         UpdateAdornerToMatch(resizing);
+    }
+
+    /// <summary>Rounds a coordinate/length to the nearest grid line when snap-to-grid is on; returns it unchanged otherwise.</summary>
+    private double Snap(double value) => _snapToGridEnabled ? Math.Round(value / GridSpacing) * GridSpacing : value;
+
+    /// <summary>Toggles snap-to-grid, redraws the dot overlay to match, and persists the new state.</summary>
+    private void SnapToGridToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        _snapToGridEnabled = SnapToGridToggle.IsChecked == true;
+        RenderGridOverlay();
+        SavePanelLayout();
+    }
+
+    /// <summary>Repopulates <see cref="GridOverlay"/> with a dot at every grid intersection across the current page size, or clears it when snap-to-grid is off.</summary>
+    private void RenderGridOverlay()
+    {
+        GridOverlay.Children.Clear();
+        if (!_snapToGridEnabled)
+        {
+            return;
+        }
+
+        for (var x = 0.0; x < GridOverlay.Width; x += GridSpacing)
+        {
+            for (var y = 0.0; y < GridOverlay.Height; y += GridSpacing)
+            {
+                var dot = new Microsoft.UI.Xaml.Shapes.Rectangle
+                {
+                    Width = 2,
+                    Height = 2,
+                    Fill = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0xC0, 0xC0, 0xC0)),
+                    IsHitTestVisible = false,
+                };
+                Canvas.SetLeft(dot, x);
+                Canvas.SetTop(dot, y);
+                GridOverlay.Children.Add(dot);
+            }
+        }
     }
 
     /// <summary>Ends a resize drag: commits the element's final position/size to the document (undo entry + XAML refresh) and releases pointer capture. A no-op if nothing actually changed (a press+release on a handle with no drag in between).</summary>
@@ -2461,7 +2519,8 @@ public sealed partial class MainWindow : Window
     /// <param name="ToolboxWidth">Width of the toolbox column.</param>
     /// <param name="FilePanelHeight">Height of the file-browser panel row.</param>
     /// <param name="XamlSourceHeight">Height of the XAML source pane row.</param>
-    private sealed record PanelLayout(double ToolboxWidth, double FilePanelHeight, double XamlSourceHeight);
+    /// <param name="SnapToGrid">Whether snap-to-grid was enabled. Defaults to false so layout files saved before research/48 still deserialize.</param>
+    private sealed record PanelLayout(double ToolboxWidth, double FilePanelHeight, double XamlSourceHeight, bool SnapToGrid = false);
 
     /// <summary>Restores panel sizes from <see cref="LayoutConfigPath"/>, leaving the XAML-declared defaults in place if the file is missing or unreadable.</summary>
     private void LoadPanelLayout()
@@ -2482,6 +2541,7 @@ public sealed partial class MainWindow : Window
             ToolboxColumn.Width = new GridLength(layout.ToolboxWidth);
             FilePanelRow.Height = new GridLength(layout.FilePanelHeight);
             XamlSourceRow.Height = new GridLength(layout.XamlSourceHeight);
+            _snapToGridEnabled = layout.SnapToGrid;
         }
         catch (Exception)
         {
@@ -2494,7 +2554,7 @@ public sealed partial class MainWindow : Window
     {
         try
         {
-            var layout = new PanelLayout(ToolboxColumn.Width.Value, FilePanelRow.Height.Value, XamlSourceRow.Height.Value);
+            var layout = new PanelLayout(ToolboxColumn.Width.Value, FilePanelRow.Height.Value, XamlSourceRow.Height.Value, _snapToGridEnabled);
             Directory.CreateDirectory(Path.GetDirectoryName(LayoutConfigPath)!);
             File.WriteAllText(LayoutConfigPath, JsonSerializer.Serialize(layout));
         }

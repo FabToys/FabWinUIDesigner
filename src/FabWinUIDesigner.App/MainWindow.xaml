@@ -27,17 +27,38 @@
         <!-- Center: design surface (pasteboard) above, XAML source view below -->
         <Grid Grid.Column="2">
             <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
                 <RowDefinition x:Name="DesignSurfaceRow" Height="*" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition x:Name="XamlSourceRow" Height="220" />
             </Grid.RowDefinitions>
 
+            <!-- Design toolbar: icon buttons for design-surface-view settings (as opposed to the
+                 XAML Source strip's document operations, e.g. Format). Snap to Grid lives here
+                 first; room for future design-view toggles (e.g. alignment guides) alongside it. -->
+            <Border Grid.Row="0" Background="#FFF3F3F3" BorderBrush="Gray" BorderThickness="0,0,0,1" Padding="4">
+                <StackPanel Orientation="Horizontal" Spacing="2">
+                    <ToggleButton
+                        x:Name="SnapToGridToggle"
+                        Padding="6"
+                        Checked="SnapToGridToggle_Toggled"
+                        Unchecked="SnapToGridToggle_Toggled"
+                        ToolTipService.ToolTip="Snap to Grid (research/48-snap-to-grid.md)">
+                        <FontIcon Glyph="&#xE80A;" FontSize="14" />
+                    </ToggleButton>
+                </StackPanel>
+            </Border>
+
             <!-- Pasteboard: gray background behind the page, like the WPF/VS designer's design
                  tab background outside the window's own bounds. -->
-            <Border Grid.Row="0" Background="#FFE6E6E6" BorderBrush="Gray" BorderThickness="0,0,0,1">
+            <Border Grid.Row="1" Background="#FFE6E6E6" BorderBrush="Gray" BorderThickness="0,0,0,1">
                 <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
                     <Grid>
-                        <!-- The page itself: white and bordered so it reads as sitting on top of the pasteboard. -->
+                        <!-- The page itself: white and bordered so it reads as sitting on top of the
+                             pasteboard. GridOverlay (below) draws on top of it, not behind it - the
+                             loaded document's own root commonly sets its own opaque Background (e.g.
+                             samples/SimplePage.xaml's root Canvas is Background="White"), which would
+                             otherwise paint straight over any dots placed behind this Border. -->
                         <Border
                             x:Name="DesignSurfaceHost"
                             Margin="16"
@@ -46,6 +67,20 @@
                             Background="White"
                             BorderBrush="#FFBFBFBF"
                             BorderThickness="1" />
+
+                        <!-- Snap-to-grid dot overlay: sits on top of DesignSurfaceHost (see above) so
+                             its dots are always visible regardless of the loaded document's own root
+                             background; not hit-test-visible so clicks/drags still reach the design
+                             surface underneath. Dots are plain Rectangles added/cleared in code
+                             (RenderGridOverlay), sized to match DesignSurfaceHost via its SizeChanged
+                             handler. research/48-snap-to-grid.md. -->
+                        <Canvas
+                            x:Name="GridOverlay"
+                            Margin="16"
+                            HorizontalAlignment="Left"
+                            VerticalAlignment="Top"
+                            IsHitTestVisible="False"
+                            Background="Transparent" />
 
                         <!-- Selection adorner overlay: same Margin/alignment as DesignSurfaceHost so their
                              local (0,0) coincide, letting TransformToVisual(DesignSurfaceHost) bounds be
@@ -109,9 +144,9 @@
             </Border>
 
             <!-- Draggable splitter: Design surface <-> XAML source -->
-            <local:SplitterThumb x:Name="DesignXamlSplitter" Grid.Row="1" Height="8" Background="#FFE0E0E0" VerticalAlignment="Stretch" />
+            <local:SplitterThumb x:Name="DesignXamlSplitter" Grid.Row="2" Height="8" Background="#FFE0E0E0" VerticalAlignment="Stretch" />
 
-            <Grid Grid.Row="2">
+            <Grid Grid.Row="3">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
