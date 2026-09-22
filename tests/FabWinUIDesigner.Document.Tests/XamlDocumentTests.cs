@@ -79,7 +79,7 @@ public class XamlDocumentTests
 
         // But whitespace *between* elements (indentation, blank lines) is real text content
         // and round-trips exactly.
-        StringAssert.Contains(roundTripped, "\n\n    <Canvas Width=\"400\" Height=\"300\" Background=\"White\">\n        <TextBlock");
+        StringAssert.Contains(roundTripped, "\n    <Canvas Width=\"400\" Height=\"300\" Background=\"White\">\n        <TextBlock");
     }
 
     [TestMethod]

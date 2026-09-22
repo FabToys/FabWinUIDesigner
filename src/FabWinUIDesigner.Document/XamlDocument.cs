@@ -56,9 +56,13 @@ public sealed class XamlDocument
     /// whitespace it already had - for an explicit "Format Document" action, not the normal
     /// save/round-trip path (which deliberately preserves original formatting - see
     /// research/01-xml-roundtrip-formatting.md - so opening a file and changing nothing doesn't
-    /// produce a reformat-sized diff). Doesn't wrap a long start tag's attributes one-per-line
-    /// (a plain <see cref="XmlWriter"/> can't do that); see research/29-format-document-plan.md
-    /// for that known, accepted limitation.
+    /// produce a reformat-sized diff). Doesn't wrap a long start tag's attributes one-per-line -
+    /// tried in research/50-format-document-attribute-wrapping.md and reverted: whitespace
+    /// *between attributes inside a tag* isn't representable in the XML object model at all (the
+    /// same limitation research/01 documents for hand-edited multi-line xmlns blocks), so any
+    /// wrapping is destroyed the instant the text is re-parsed - which the app's normal
+    /// edit-commit pipeline (parse-then-redisplay) always does, including right after the Format
+    /// button's own click handler applies it. Not fixable within this method alone.
     /// </summary>
     /// <returns>The document's XAML text, reformatted with consistent indentation.</returns>
     public string ToFormattedXamlString()

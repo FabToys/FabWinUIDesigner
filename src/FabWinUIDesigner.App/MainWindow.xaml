@@ -320,10 +320,30 @@
                      per his separate earlier ask there - see research/23) - scrolling to find
                      Events under Properties was inconvenient, so they're now two switchable
                      panels instead of one long scrolling list. -->
-                <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="1" BorderBrush="Gray" BorderThickness="0,0,0,1">
-                    <Button x:Name="PropertiesTabButton" Content="Properties" Click="PropertiesTabButton_Click" Padding="12,4" CornerRadius="0" BorderThickness="0" />
-                    <Button x:Name="EventsTabButton" Content="Events" Click="EventsTabButton_Click" Padding="12,4" CornerRadius="0" BorderThickness="0" />
-                </StackPanel>
+                <Grid Grid.Row="0" BorderBrush="Gray" BorderThickness="0,0,0,1">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="1">
+                        <Button x:Name="PropertiesTabButton" Content="Properties" Click="PropertiesTabButton_Click" Padding="12,4" CornerRadius="0" BorderThickness="0" />
+                        <Button x:Name="EventsTabButton" Content="Events" Click="EventsTabButton_Click" Padding="12,4" CornerRadius="0" BorderThickness="0" />
+                    </StackPanel>
+
+                    <!-- Same icon-toolbar pattern as the design surface's Snap to Grid button
+                         (research/48) - drives both the Properties and Events grids together. -->
+                    <ToggleButton
+                        x:Name="AlphabeticalViewToggle"
+                        Grid.Column="1"
+                        Padding="6"
+                        Margin="0,0,2,0"
+                        Checked="AlphabeticalViewToggle_Toggled"
+                        Unchecked="AlphabeticalViewToggle_Toggled"
+                        ToolTipService.ToolTip="Alphabetical View (research/52-property-grid-alphabetical-view.md)">
+                        <FontIcon Glyph="&#xE8CB;" FontSize="14" />
+                    </ToggleButton>
+                </Grid>
 
                 <StackPanel Grid.Row="1" Padding="8" Spacing="4">
                     <TextBlock x:Name="SelectionSummaryText" Text="(no selection)" Foreground="Gray" />

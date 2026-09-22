@@ -50,6 +50,10 @@ public sealed partial class MainWindow : Window
     private const double GridSpacing = 8;
     private bool _snapToGridEnabled;
 
+    // Property/Events grid view toggle (research/52-property-grid-alphabetical-view.md) - one
+    // flag drives both grids, since they share BuildCategorizedGrid.
+    private bool _alphabeticalPropertyView;
+
     private string? _currentFilePath;
     private XamlDocument? _currentDocument;
     private IReadOnlyDictionary<UIElement, DesignElement> _liveToDesign = new Dictionary<UIElement, DesignElement>();
@@ -115,6 +119,7 @@ public sealed partial class MainWindow : Window
 
         LoadPanelLayout();
         SnapToGridToggle.IsChecked = _snapToGridEnabled;
+        AlphabeticalViewToggle.IsChecked = _alphabeticalPropertyView;
         DesignSurfaceHost.SizeChanged += (_, _) =>
         {
             GridOverlay.Width = DesignSurfaceHost.ActualWidth;
@@ -1268,6 +1273,7 @@ public sealed partial class MainWindow : Window
             PropertyGridPanel,
             descriptors,
             PropertyCategoryOrder,
+            _alphabeticalPropertyView,
             getName: d => d.Name,
             getCategory: d => d.Category,
             createEditor: d => CreatePropertyEditor(designElement, d, liveType));
@@ -1299,6 +1305,7 @@ public sealed partial class MainWindow : Window
             EventGridPanel,
             descriptors,
             EventCategoryOrder,
+            _alphabeticalPropertyView,
             getName: d => d.Name,
             getCategory: d => d.Category,
             createEditor: d => CreateEventEditor(designElement, d));
@@ -1307,8 +1314,9 @@ public sealed partial class MainWindow : Window
     /// <summary>
     /// Shared Properties/Events grid builder (research/46): groups <paramref name="descriptors"/>
     /// under a bold category header row per distinct <c>Category</c> - the WPF-style "Arrange by
-    /// Category" view from Fabrice's screenshot, minus a togglable raw/alphabetical view (not
-    /// asked for yet, same "note, don't build" treatment as research 08/14). Categories in
+    /// Category" view from Fabrice's screenshot - or, when <paramref name="alphabetical"/> is
+    /// true, one flat list sorted by name with no category headers at all
+    /// (research/52-property-grid-alphabetical-view.md). Categories in
     /// <paramref name="categoryOrder"/> are shown first in that order; any other category found in
     /// the data (e.g. a typo'd JSON value) still shows, alphabetically, after - so a bad category
     /// name is visible instead of silently dropping properties.
@@ -1318,6 +1326,7 @@ public sealed partial class MainWindow : Window
         Panel targetPanel,
         IReadOnlyList<TDescriptor> descriptors,
         string[] categoryOrder,
+        bool alphabetical,
         Func<TDescriptor, string> getName,
         Func<TDescriptor, string> getCategory,
         Func<TDescriptor, FrameworkElement> createEditor)
@@ -1328,31 +1337,46 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        var orderedCategories = categoryOrder
-            .Where(category => descriptors.Any(d => getCategory(d) == category))
-            .Concat(descriptors.Select(getCategory).Distinct().Except(categoryOrder).OrderBy(c => c, StringComparer.Ordinal))
-            .ToList();
+        var orderedCategories = alphabetical
+            ? []
+            : categoryOrder
+                .Where(category => descriptors.Any(d => getCategory(d) == category))
+                .Concat(descriptors.Select(getCategory).Distinct().Except(categoryOrder).OrderBy(c => c, StringComparer.Ordinal))
+                .ToList();
 
-        var rowCount = orderedCategories.Count + descriptors.Count; // one extra header row per category
+        var rowCount = orderedCategories.Count + descriptors.Count; // one extra header row per category (0 when alphabetical)
         var grid = BuildGridLinesGrid(rowCount, out var gridLineBrush);
 
-        var row = 0;
-        foreach (var category in orderedCategories)
+        void AddDescriptorRow(TDescriptor descriptor, int row, bool isLastRow)
         {
-            AddCategoryHeaderCell(grid, category, row, gridLineBrush);
-            row++;
+            var label = new TextBlock { Text = getName(descriptor), VerticalAlignment = VerticalAlignment.Center };
+            AddGridCell(grid, label, row, column: 0, gridLineBrush, isLastRow);
 
-            foreach (var descriptor in descriptors.Where(d => getCategory(d) == category))
+            var editor = createEditor(descriptor);
+            AddGridCell(grid, editor, row, column: 1, gridLineBrush, isLastRow);
+        }
+
+        var currentRow = 0;
+        if (alphabetical)
+        {
+            foreach (var descriptor in descriptors.OrderBy(getName, StringComparer.Ordinal))
             {
-                var isLastRow = row == rowCount - 1;
+                AddDescriptorRow(descriptor, currentRow, isLastRow: currentRow == rowCount - 1);
+                currentRow++;
+            }
+        }
+        else
+        {
+            foreach (var category in orderedCategories)
+            {
+                AddCategoryHeaderCell(grid, category, currentRow, gridLineBrush);
+                currentRow++;
 
-                var label = new TextBlock { Text = getName(descriptor), VerticalAlignment = VerticalAlignment.Center };
-                AddGridCell(grid, label, row, column: 0, gridLineBrush, isLastRow);
-
-                var editor = createEditor(descriptor);
-                AddGridCell(grid, editor, row, column: 1, gridLineBrush, isLastRow);
-
-                row++;
+                foreach (var descriptor in descriptors.Where(d => getCategory(d) == category))
+                {
+                    AddDescriptorRow(descriptor, currentRow, isLastRow: currentRow == rowCount - 1);
+                    currentRow++;
+                }
             }
         }
 
@@ -1465,7 +1489,13 @@ public sealed partial class MainWindow : Window
     /// <returns>The editor control, ready to place in the property grid.</returns>
     private FrameworkElement CreatePropertyEditor(DesignElement designElement, PropertyDescriptor descriptor, Type? liveType)
     {
-        var currentText = designElement.GetAttribute(descriptor.Name) ?? string.Empty;
+        // "Name" is x:Name (a namespaced attribute, via DesignElement.Name), not a plain
+        // unprefixed "Name" attribute - same special case ApplyPropertyEdit already applies on
+        // the write side (see its own comment); this was missing here on the read side, so the
+        // field always displayed blank regardless of what was actually set (research/51).
+        var currentText = descriptor.Name == "Name"
+            ? designElement.Name ?? string.Empty
+            : designElement.GetAttribute(descriptor.Name) ?? string.Empty;
         var (kind, enumValues) = PropertyKindResolver.Resolve(liveType?.GetProperty(descriptor.Name));
 
         // Bool -> CheckBox, Enum -> ComboBox of its named values, everything else -> a plain
@@ -2291,6 +2321,18 @@ public sealed partial class MainWindow : Window
 
     private PropertyPaneTab _propertyPaneTab = PropertyPaneTab.Properties;
 
+    /// <summary>Toggles the Properties/Events grids between category-grouped and flat-alphabetical, rebuilds whichever is currently selected, and persists the choice.</summary>
+    private void AlphabeticalViewToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        _alphabeticalPropertyView = AlphabeticalViewToggle.IsChecked == true;
+        if (_selectedDesignElement is not null)
+        {
+            BuildPropertyGrid(_selectedDesignElement);
+        }
+
+        SavePanelLayout();
+    }
+
     private void PropertiesTabButton_Click(object sender, RoutedEventArgs e) => ShowPropertyPaneTab(PropertyPaneTab.Properties);
 
     private void EventsTabButton_Click(object sender, RoutedEventArgs e) => ShowPropertyPaneTab(PropertyPaneTab.Events);
@@ -2520,7 +2562,8 @@ public sealed partial class MainWindow : Window
     /// <param name="FilePanelHeight">Height of the file-browser panel row.</param>
     /// <param name="XamlSourceHeight">Height of the XAML source pane row.</param>
     /// <param name="SnapToGrid">Whether snap-to-grid was enabled. Defaults to false so layout files saved before research/48 still deserialize.</param>
-    private sealed record PanelLayout(double ToolboxWidth, double FilePanelHeight, double XamlSourceHeight, bool SnapToGrid = false);
+    /// <param name="AlphabeticalPropertyView">Whether the Properties/Events grids were showing the flat alphabetical view. Defaults to false (category-grouped) so layout files saved before research/52 still deserialize.</param>
+    private sealed record PanelLayout(double ToolboxWidth, double FilePanelHeight, double XamlSourceHeight, bool SnapToGrid = false, bool AlphabeticalPropertyView = false);
 
     /// <summary>Restores panel sizes from <see cref="LayoutConfigPath"/>, leaving the XAML-declared defaults in place if the file is missing or unreadable.</summary>
     private void LoadPanelLayout()
@@ -2542,6 +2585,7 @@ public sealed partial class MainWindow : Window
             FilePanelRow.Height = new GridLength(layout.FilePanelHeight);
             XamlSourceRow.Height = new GridLength(layout.XamlSourceHeight);
             _snapToGridEnabled = layout.SnapToGrid;
+            _alphabeticalPropertyView = layout.AlphabeticalPropertyView;
         }
         catch (Exception)
         {
@@ -2554,7 +2598,7 @@ public sealed partial class MainWindow : Window
     {
         try
         {
-            var layout = new PanelLayout(ToolboxColumn.Width.Value, FilePanelRow.Height.Value, XamlSourceRow.Height.Value, _snapToGridEnabled);
+            var layout = new PanelLayout(ToolboxColumn.Width.Value, FilePanelRow.Height.Value, XamlSourceRow.Height.Value, _snapToGridEnabled, _alphabeticalPropertyView);
             Directory.CreateDirectory(Path.GetDirectoryName(LayoutConfigPath)!);
             File.WriteAllText(LayoutConfigPath, JsonSerializer.Serialize(layout));
         }
