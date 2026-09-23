@@ -119,6 +119,10 @@ public sealed partial class MainWindow : Window
         LoadPanelLayout();
         SnapToGridToggle.IsChecked = _snapToGridEnabled;
         AlphabeticalViewToggle.IsChecked = _alphabeticalPropertyView;
+        // Set directly too: the toggles' Checked/Unchecked handlers (which also sync the menu)
+        // don't fire when the loaded value equals the default.
+        SnapToGridMenuItem.IsChecked = _snapToGridEnabled;
+        AlphabeticalViewMenuItem.IsChecked = _alphabeticalPropertyView;
         DesignSurfaceHost.SizeChanged += (_, _) =>
         {
             GridOverlay.Width = DesignSurfaceHost.ActualWidth;
@@ -236,27 +240,41 @@ public sealed partial class MainWindow : Window
         "    <Canvas Width=\"400\" Height=\"300\" Background=\"White\" />\n" +
         "</Page>";
 
-    /// <summary>Starts a blank document, confirming discard first if the current one has unsaved changes.</summary>
-    private async void NewButton_Click(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// Asks whether to discard the current document's unsaved changes, if it has any.
+    /// </summary>
+    /// <param name="consequence">What discarding leads to, completing "This file has unsaved changes. ..." - e.g. "Starting a new file will discard them."</param>
+    /// <returns>True if there's nothing unsaved or the user chose Discard; false if they cancelled.</returns>
+    private async Task<bool> ConfirmDiscardChangesAsync(string consequence)
     {
-        // SaveButton.IsEnabled doubles as our "is dirty" flag (see UpdateToolbarButtonStates) - ask
+        // SaveButton.IsEnabled doubles as our "is dirty" flag (see UpdateCommandStates) - ask
         // for confirmation only when there's actually something that would be lost.
-        if (SaveButton.IsEnabled)
+        if (!SaveButton.IsEnabled)
         {
-            var dialog = new ContentDialog
-            {
-                Title = "Discard unsaved changes?",
-                Content = "This file has unsaved changes. Starting a new file will discard them.",
-                PrimaryButtonText = "Discard",
-                CloseButtonText = "Cancel",
-                DefaultButton = ContentDialogButton.Close,
-                XamlRoot = Content.XamlRoot,
-            };
+            return true;
+        }
 
-            if (await dialog.ShowAsync() != ContentDialogResult.Primary)
-            {
-                return;
-            }
+        var dialog = new ContentDialog
+        {
+            Title = "Discard unsaved changes?",
+            Content = $"This file has unsaved changes. {consequence}",
+            PrimaryButtonText = "Discard",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = Content.XamlRoot,
+        };
+
+        return await dialog.ShowAsync() == ContentDialogResult.Primary;
+    }
+
+    private async void NewButton_Click(object sender, RoutedEventArgs e) => await NewFileAsync();
+
+    /// <summary>Starts a blank document, confirming discard first if the current one has unsaved changes.</summary>
+    private async Task NewFileAsync()
+    {
+        if (!await ConfirmDiscardChangesAsync("Starting a new file will discard them."))
+        {
+            return;
         }
 
         // Same reset as LoadFile, but from the blank template and with no path yet.
@@ -272,11 +290,13 @@ public sealed partial class MainWindow : Window
 
         RefreshDesignSurfaceFromDocument();
         SelectDocumentRootAfterLayout();
-        UpdateToolbarButtonStates();
+        UpdateCommandStates();
     }
 
+    private async void OpenButton_Click(object sender, RoutedEventArgs e) => await OpenFileAsync();
+
     /// <summary>Prompts for a `.xaml` file via the file picker and loads it.</summary>
-    private async void OpenButton_Click(object sender, RoutedEventArgs e)
+    private async Task OpenFileAsync()
     {
         var picker = new FileOpenPicker();
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
@@ -293,6 +313,9 @@ public sealed partial class MainWindow : Window
     /// <summary>Saves the current document, prompting for a location first ("Save As" semantics) if it doesn't have a path yet (i.e. it came from New File).</summary>
     private async void SaveButton_Click(object sender, RoutedEventArgs e) => await SaveCurrentDocumentAsync();
 
+    /// <summary>File → Save As: always prompts for a location, then saves there and makes it the current file.</summary>
+    private async void SaveAsMenuItem_Click(object sender, RoutedEventArgs e) => await SaveCurrentDocumentAsync(saveAs: true);
+
     /// <summary>
     /// Commits any pending edit sitting in the XAML source view first (so Ctrl+S while typing
     /// there behaves the way it would in a real text editor - save what you just typed, not the
@@ -300,7 +323,8 @@ public sealed partial class MainWindow : Window
     /// skipped - saving the old document while an inline error is showing would look like the
     /// edit was silently discarded.
     /// </summary>
-    private async Task SaveCurrentDocumentAsync()
+    /// <param name="saveAs">True to always prompt for a location (Save As), even if the document already has a path.</param>
+    private async Task SaveCurrentDocumentAsync(bool saveAs = false)
     {
         if (!TryApplyXamlSourceEdit())
         {
@@ -313,13 +337,13 @@ public sealed partial class MainWindow : Window
         }
 
         // A document created via New File has no path yet - prompt for one, same as "Save As".
-        if (_currentFilePath is null)
+        if (_currentFilePath is null || saveAs)
         {
             var picker = new FileSavePicker();
             var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
             WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
             picker.FileTypeChoices.Add("XAML File", new List<string> { ".xaml" });
-            picker.SuggestedFileName = "NewPage";
+            picker.SuggestedFileName = _currentFilePath is null ? "NewPage" : Path.GetFileNameWithoutExtension(_currentFilePath);
 
             var file = await picker.PickSaveFileAsync();
             if (file is null)
@@ -333,13 +357,38 @@ public sealed partial class MainWindow : Window
 
         _currentDocument.Save(_currentFilePath);
         _lastSavedXaml = _currentDocument.ToXamlString();
-        UpdateToolbarButtonStates();
+        UpdateCommandStates();
         AddRecentFile(_currentFilePath);
         SyncEventHandlerStubs();
     }
 
+    /// <summary>File → Exit: closes the window, after the same "discard unsaved changes?" check as New File.</summary>
+    private async void ExitMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (await ConfirmDiscardChangesAsync("Exiting will discard them."))
+        {
+            Close();
+        }
+    }
+
+    /// <summary>Help → About: app name and version.</summary>
+    private async void AboutMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        var version = typeof(MainWindow).Assembly.GetName().Version;
+        var dialog = new ContentDialog
+        {
+            Title = "About FabWinUI Designer",
+            Content = $"FabWinUI Designer {version}\nA visual designer for WinUI 3 XAML pages.",
+            CloseButtonText = "OK",
+            XamlRoot = Content.XamlRoot,
+        };
+        await dialog.ShowAsync();
+    }
+
+    private async void OpenFolderButton_Click(object sender, RoutedEventArgs e) => await OpenFolderAsync();
+
     /// <summary>Prompts for a folder via the folder picker and populates the file tree from it.</summary>
-    private async void OpenFolderButton_Click(object sender, RoutedEventArgs e)
+    private async Task OpenFolderAsync()
     {
         var picker = new FolderPicker();
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
@@ -486,45 +535,34 @@ public sealed partial class MainWindow : Window
         RefreshRecentMenu();
     }
 
-    /// <summary>Rebuilds <c>RecentFlyout</c>'s items from <see cref="_recentFiles"/>/<see cref="_recentFolders"/> - two labeled, separator-divided sections, or a disabled placeholder if both are empty.</summary>
+    /// <summary>Rebuilds the File menu's Recent Files ▸ / Recent Folders ▸ submenus from <see cref="_recentFiles"/>/<see cref="_recentFolders"/>.</summary>
     private void RefreshRecentMenu()
     {
-        RecentFlyout.Items.Clear();
+        FillRecentSubmenu(RecentFilesMenu, _recentFiles, RecentFileItem_Click);
+        FillRecentSubmenu(RecentFoldersMenu, _recentFolders, RecentFolderItem_Click);
+    }
 
-        if (_recentFiles.Count == 0 && _recentFolders.Count == 0)
+    /// <summary>Replaces <paramref name="submenu"/>'s items with one entry per path (numbered like VS's recent lists), or a disabled "(none)" placeholder if <paramref name="paths"/> is empty.</summary>
+    /// <param name="submenu">The File-menu submenu to fill.</param>
+    /// <param name="paths">Paths to list, most-recent-first.</param>
+    /// <param name="onClick">Click handler for each entry; it reads the path back from the item's <c>Tag</c>.</param>
+    private static void FillRecentSubmenu(MenuFlyoutSubItem submenu, List<string> paths, RoutedEventHandler onClick)
+    {
+        submenu.Items.Clear();
+
+        if (paths.Count == 0)
         {
-            RecentFlyout.Items.Add(new MenuFlyoutItem { Text = "(no recent items)", IsEnabled = false });
+            submenu.Items.Add(new MenuFlyoutItem { Text = "(none)", IsEnabled = false });
             return;
         }
 
-        // A disabled MenuFlyoutItem acts as a non-clickable section header, since MenuFlyout has
-        // no built-in grouping/header control. Path is stashed in Tag so the click handler knows
-        // which entry was clicked without a closure per item.
-        if (_recentFiles.Count > 0)
+        // Path is stashed in Tag so the click handler knows which entry was clicked without a
+        // closure per item.
+        for (var i = 0; i < paths.Count; i++)
         {
-            RecentFlyout.Items.Add(new MenuFlyoutItem { Text = "Recent Files", IsEnabled = false });
-            foreach (var path in _recentFiles)
-            {
-                var item = new MenuFlyoutItem { Text = path, Tag = path };
-                item.Click += RecentFileItem_Click;
-                RecentFlyout.Items.Add(item);
-            }
-        }
-
-        if (_recentFolders.Count > 0)
-        {
-            if (_recentFiles.Count > 0)
-            {
-                RecentFlyout.Items.Add(new MenuFlyoutSeparator());
-            }
-
-            RecentFlyout.Items.Add(new MenuFlyoutItem { Text = "Recent Folders", IsEnabled = false });
-            foreach (var path in _recentFolders)
-            {
-                var item = new MenuFlyoutItem { Text = path, Tag = path };
-                item.Click += RecentFolderItem_Click;
-                RecentFlyout.Items.Add(item);
-            }
+            var item = new MenuFlyoutItem { Text = $"{i + 1} {paths[i]}", Tag = paths[i] };
+            item.Click += onClick;
+            submenu.Items.Add(item);
         }
     }
 
@@ -559,6 +597,7 @@ public sealed partial class MainWindow : Window
         if (Directory.Exists(path))
         {
             PopulateFileTree(path);
+            AddRecentFolder(path);
         }
         else
         {
@@ -1062,9 +1101,14 @@ public sealed partial class MainWindow : Window
     private void SnapToGridToggle_Toggled(object sender, RoutedEventArgs e)
     {
         _snapToGridEnabled = SnapToGridToggle.IsChecked == true;
+        SnapToGridMenuItem.IsChecked = _snapToGridEnabled;
         RenderGridOverlay();
         SavePanelLayout();
     }
+
+    /// <summary>View → Snap to Grid: drives the design toolbar's toggle, whose handler does the actual work and keeps both in sync.</summary>
+    private void SnapToGridMenuItem_Click(object sender, RoutedEventArgs e) =>
+        SnapToGridToggle.IsChecked = SnapToGridMenuItem.IsChecked;
 
     /// <summary>Repopulates <see cref="GridOverlay"/> with a dot at every grid intersection across the current page size, or clears it when snap-to-grid is off.</summary>
     private void RenderGridOverlay()
@@ -1174,6 +1218,7 @@ public sealed partial class MainWindow : Window
 
         _selectedLiveElement = liveElement;
         _selectedDesignElement = designElement;
+        UpdateSelectionCommandStates();
 
         SelectionRectangle.Visibility = Visibility.Visible;
         SelectionLabel.Visibility = Visibility.Visible;
@@ -1211,6 +1256,7 @@ public sealed partial class MainWindow : Window
         SelectionSummaryText.Text = "(no selection)";
         PropertyGridPanel.Children.Clear();
         EventGridPanel.Children.Clear();
+        UpdateSelectionCommandStates();
     }
 
     /// <summary>
@@ -1229,6 +1275,28 @@ public sealed partial class MainWindow : Window
         {
             await SaveCurrentDocumentAsync();
             e.Handled = true;
+            return;
+        }
+
+        // File-level shortcuts work regardless of focus, like Ctrl+S - neither a TextBox nor the
+        // XAML editor uses them for anything of its own.
+        if (ctrlDown && e.Key is VirtualKey.N or VirtualKey.O)
+        {
+            var shiftDown = InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Shift).HasFlag(CoreVirtualKeyStates.Down);
+            e.Handled = true;
+            if (e.Key == VirtualKey.N)
+            {
+                await NewFileAsync();
+            }
+            else if (shiftDown)
+            {
+                await OpenFolderAsync();
+            }
+            else
+            {
+                await OpenFileAsync();
+            }
+
             return;
         }
 
@@ -2349,6 +2417,7 @@ public sealed partial class MainWindow : Window
     private void AlphabeticalViewToggle_Toggled(object sender, RoutedEventArgs e)
     {
         _alphabeticalPropertyView = AlphabeticalViewToggle.IsChecked == true;
+        AlphabeticalViewMenuItem.IsChecked = _alphabeticalPropertyView;
         if (_selectedDesignElement is not null)
         {
             BuildPropertyGrid(_selectedDesignElement);
@@ -2356,6 +2425,10 @@ public sealed partial class MainWindow : Window
 
         SavePanelLayout();
     }
+
+    /// <summary>View → Alphabetical Properties: drives the property pane's toggle, whose handler does the actual work and keeps both in sync.</summary>
+    private void AlphabeticalViewMenuItem_Click(object sender, RoutedEventArgs e) =>
+        AlphabeticalViewToggle.IsChecked = AlphabeticalViewMenuItem.IsChecked;
 
     private void PropertiesTabButton_Click(object sender, RoutedEventArgs e) => ShowPropertyPaneTab(PropertyPaneTab.Properties);
 
@@ -2419,7 +2492,7 @@ public sealed partial class MainWindow : Window
 
         // Most commits are followed by a source-view refresh that updates the toolbar anyway,
         // but not all of them - doing it here too keeps Undo/Redo from ever lagging behind.
-        UpdateToolbarButtonStates();
+        UpdateCommandStates();
     }
 
     /// <summary>Restores the document to the top of the undo stack, pushing the current state onto redo first.</summary>
@@ -2433,7 +2506,7 @@ public sealed partial class MainWindow : Window
         _redoStack.Push(_currentDocument.ToXamlString());
         _currentDocument = XamlDocument.Parse(_undoStack.Pop());
         RefreshDesignSurfaceFromDocument();
-        UpdateToolbarButtonStates();
+        UpdateCommandStates();
     }
 
     /// <summary>Restores the document to the top of the redo stack, pushing the current state onto undo first.</summary>
@@ -2447,7 +2520,7 @@ public sealed partial class MainWindow : Window
         _undoStack.Push(_currentDocument.ToXamlString());
         _currentDocument = XamlDocument.Parse(_redoStack.Pop());
         RefreshDesignSurfaceFromDocument();
-        UpdateToolbarButtonStates();
+        UpdateCommandStates();
     }
 
     /// <summary>
@@ -2475,7 +2548,7 @@ public sealed partial class MainWindow : Window
             _suppressSourceSelectionSync = false;
         }
 
-        UpdateToolbarButtonStates();
+        UpdateCommandStates();
     }
 
     /// <summary>
@@ -2484,14 +2557,28 @@ public sealed partial class MainWindow : Window
     /// load/save), Undo/Redo only when their stack has something to restore, and Format only
     /// when a document is open.
     /// </summary>
-    private void UpdateToolbarButtonStates()
+    private void UpdateCommandStates()
     {
         var hasDocument = _currentDocument is not null;
-        SaveButton.IsEnabled = hasDocument && _currentDocument!.ToXamlString() != _lastSavedXaml;
-        UndoButton.IsEnabled = hasDocument && _undoStack.Count > 0;
-        RedoButton.IsEnabled = hasDocument && _redoStack.Count > 0;
-        FormatToolbarButton.IsEnabled = hasDocument;
+        SaveButton.IsEnabled = SaveMenuItem.IsEnabled = hasDocument && _currentDocument!.ToXamlString() != _lastSavedXaml;
+        SaveAsMenuItem.IsEnabled = hasDocument;
+        UndoButton.IsEnabled = UndoMenuItem.IsEnabled = hasDocument && _undoStack.Count > 0;
+        RedoButton.IsEnabled = RedoMenuItem.IsEnabled = hasDocument && _redoStack.Count > 0;
+        FormatToolbarButton.IsEnabled = FormatMenuItem.IsEnabled = hasDocument;
+        UpdateSelectionCommandStates();
     }
+
+    /// <summary>Enables Edit → Delete / Deselect only while something is selected. Split out from <see cref="UpdateCommandStates"/> because it runs on every selection change, where re-serializing the document for the Save check would be wasted work.</summary>
+    private void UpdateSelectionCommandStates()
+    {
+        DeleteMenuItem.IsEnabled = DeselectMenuItem.IsEnabled = _selectedDesignElement is not null;
+    }
+
+    /// <summary>Edit → Delete - same as the Del key.</summary>
+    private void DeleteMenuItem_Click(object sender, RoutedEventArgs e) => DeleteSelectedControl();
+
+    /// <summary>Edit → Deselect - same as the Esc key.</summary>
+    private void DeselectMenuItem_Click(object sender, RoutedEventArgs e) => ClearSelection();
 
     /// <summary>Toolbar Undo - same as Ctrl+Z, but without Ctrl+Z's focus guard: clicking the button is an explicit document-level undo, so it never competes with a text field's own undo.</summary>
     private void UndoButton_Click(object sender, RoutedEventArgs e) => Undo();

@@ -8,6 +8,7 @@
     <Grid x:Name="RootGrid" KeyDown="RootGrid_KeyDown">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
         <Grid.ColumnDefinitions>
@@ -17,30 +18,81 @@
             <ColumnDefinition Width="260" />
         </Grid.ColumnDefinitions>
 
+        <!-- Main menu. Shortcut text is display-only (KeyboardAcceleratorTextOverride): every
+             shortcut is handled in RootGrid_KeyDown alone. Real KeyboardAccelerators on these
+             items could fire as well as that handler, and would bypass its guard that leaves
+             Ctrl+Z/Y to a focused text field's own undo. -->
+        <MenuBar Grid.Row="0" Grid.ColumnSpan="4">
+            <MenuBarItem Title="File">
+                <MenuFlyoutItem Text="New File" Click="NewButton_Click" KeyboardAcceleratorTextOverride="Ctrl+N">
+                    <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE7C3;" /></MenuFlyoutItem.Icon>
+                </MenuFlyoutItem>
+                <MenuFlyoutItem Text="Open File..." Click="OpenButton_Click" KeyboardAcceleratorTextOverride="Ctrl+O">
+                    <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8E5;" /></MenuFlyoutItem.Icon>
+                </MenuFlyoutItem>
+                <MenuFlyoutItem Text="Open Folder..." Click="OpenFolderButton_Click" KeyboardAcceleratorTextOverride="Ctrl+Shift+O">
+                    <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8DA;" /></MenuFlyoutItem.Icon>
+                </MenuFlyoutItem>
+                <MenuFlyoutSeparator />
+                <MenuFlyoutItem x:Name="SaveMenuItem" Text="Save" Click="SaveButton_Click" IsEnabled="False" KeyboardAcceleratorTextOverride="Ctrl+S">
+                    <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE74E;" /></MenuFlyoutItem.Icon>
+                </MenuFlyoutItem>
+                <MenuFlyoutItem x:Name="SaveAsMenuItem" Text="Save As..." Click="SaveAsMenuItem_Click" IsEnabled="False" />
+                <MenuFlyoutSeparator />
+                <MenuFlyoutSubItem x:Name="RecentFilesMenu" Text="Recent Files">
+                    <MenuFlyoutSubItem.Icon><FontIcon Glyph="&#xE81C;" /></MenuFlyoutSubItem.Icon>
+                </MenuFlyoutSubItem>
+                <MenuFlyoutSubItem x:Name="RecentFoldersMenu" Text="Recent Folders" />
+                <MenuFlyoutSeparator />
+                <MenuFlyoutItem Text="Exit" Click="ExitMenuItem_Click" />
+            </MenuBarItem>
+
+            <MenuBarItem Title="Edit">
+                <MenuFlyoutItem x:Name="UndoMenuItem" Text="Undo" Click="UndoButton_Click" IsEnabled="False" KeyboardAcceleratorTextOverride="Ctrl+Z">
+                    <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE7A7;" /></MenuFlyoutItem.Icon>
+                </MenuFlyoutItem>
+                <MenuFlyoutItem x:Name="RedoMenuItem" Text="Redo" Click="RedoButton_Click" IsEnabled="False" KeyboardAcceleratorTextOverride="Ctrl+Y">
+                    <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE7A6;" /></MenuFlyoutItem.Icon>
+                </MenuFlyoutItem>
+                <MenuFlyoutSeparator />
+                <MenuFlyoutItem x:Name="DeleteMenuItem" Text="Delete" Click="DeleteMenuItem_Click" IsEnabled="False" KeyboardAcceleratorTextOverride="Del">
+                    <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE74D;" /></MenuFlyoutItem.Icon>
+                </MenuFlyoutItem>
+                <MenuFlyoutItem x:Name="DeselectMenuItem" Text="Deselect" Click="DeselectMenuItem_Click" IsEnabled="False" KeyboardAcceleratorTextOverride="Esc" />
+                <MenuFlyoutSeparator />
+                <MenuFlyoutItem x:Name="FormatMenuItem" Text="Format Document" Click="FormatDocumentButton_Click" IsEnabled="False">
+                    <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8E4;" /></MenuFlyoutItem.Icon>
+                </MenuFlyoutItem>
+            </MenuBarItem>
+
+            <MenuBarItem Title="View">
+                <ToggleMenuFlyoutItem x:Name="SnapToGridMenuItem" Text="Snap to Grid" Click="SnapToGridMenuItem_Click" />
+                <ToggleMenuFlyoutItem x:Name="AlphabeticalViewMenuItem" Text="Alphabetical Properties" Click="AlphabeticalViewMenuItem_Click" />
+            </MenuBarItem>
+
+            <MenuBarItem Title="Help">
+                <MenuFlyoutItem Text="About FabWinUI Designer" Click="AboutMenuItem_Click" />
+            </MenuBarItem>
+        </MenuBar>
+
         <!-- Main toolbar: document-level actions, full width across the window like VS's standard
              toolbar. View settings (Snap to Grid, Alphabetical View) stay in their own panels'
              toolbars instead, since they belong to that view rather than to the document.
              Plain icon Buttons rather than a CommandBar, to keep the compact VS look -
              CommandBar's default height and label/overflow behaviour are touch-first. -->
-        <Border Grid.Row="0" Grid.ColumnSpan="4" Background="#FFF3F3F3" BorderBrush="Gray" BorderThickness="0,0,0,1" Padding="4">
+        <Border Grid.Row="1" Grid.ColumnSpan="4" Background="#FFF3F3F3" BorderBrush="Gray" BorderThickness="0,0,0,1" Padding="4">
             <StackPanel Orientation="Horizontal" Spacing="2">
-                <Button x:Name="NewButton" Click="NewButton_Click" Padding="6,4" ToolTipService.ToolTip="New File">
+                <Button x:Name="NewButton" Click="NewButton_Click" Padding="6,4" ToolTipService.ToolTip="New File (Ctrl+N)">
                     <FontIcon Glyph="&#xE7C3;" FontSize="14" />
                 </Button>
-                <Button x:Name="OpenButton" Click="OpenButton_Click" Padding="6,4" ToolTipService.ToolTip="Open File...">
+                <Button x:Name="OpenButton" Click="OpenButton_Click" Padding="6,4" ToolTipService.ToolTip="Open File... (Ctrl+O)">
                     <FontIcon Glyph="&#xE8E5;" FontSize="14" />
                 </Button>
-                <Button x:Name="OpenFolderButton" Click="OpenFolderButton_Click" Padding="6,4" ToolTipService.ToolTip="Open Folder...">
+                <Button x:Name="OpenFolderButton" Click="OpenFolderButton_Click" Padding="6,4" ToolTipService.ToolTip="Open Folder... (Ctrl+Shift+O)">
                     <FontIcon Glyph="&#xE8DA;" FontSize="14" />
                 </Button>
                 <Button x:Name="SaveButton" Click="SaveButton_Click" Padding="6,4" IsEnabled="False" ToolTipService.ToolTip="Save (Ctrl+S)">
                     <FontIcon Glyph="&#xE74E;" FontSize="14" />
-                </Button>
-                <Button x:Name="RecentButton" Padding="6,4" ToolTipService.ToolTip="Recent Files and Folders">
-                    <FontIcon Glyph="&#xE81C;" FontSize="14" />
-                    <Button.Flyout>
-                        <MenuFlyout x:Name="RecentFlyout" Placement="Bottom" />
-                    </Button.Flyout>
                 </Button>
 
                 <Border Width="1" Background="Gray" Margin="4,4" />
@@ -61,7 +113,7 @@
         </Border>
 
         <!-- Toolbox - items are built in code (MainWindow.BuildToolbox) from PropertyGridSchema.ToolboxControlTypes, itself read from Metadata/PropertyMetadata.json, instead of one hardcoded Button per control type here. -->
-        <Border Grid.Row="1" Grid.Column="0" BorderBrush="Gray" BorderThickness="0,0,1,0">
+        <Border Grid.Row="2" Grid.Column="0" BorderBrush="Gray" BorderThickness="0,0,1,0">
             <StackPanel Padding="8" Spacing="4">
                 <TextBlock Text="Toolbox" FontWeight="Bold" Margin="0,0,0,8" />
                 <StackPanel x:Name="ToolboxItemsPanel" Spacing="4" />
@@ -69,10 +121,10 @@
         </Border>
 
         <!-- Draggable splitter: Toolbox <-> Center -->
-        <local:SplitterThumb x:Name="ToolboxSplitter" Grid.Row="1" Grid.Column="1" Width="8" Background="#FFE0E0E0" HorizontalAlignment="Stretch" />
+        <local:SplitterThumb x:Name="ToolboxSplitter" Grid.Row="2" Grid.Column="1" Width="8" Background="#FFE0E0E0" HorizontalAlignment="Stretch" />
 
         <!-- Center: design surface (pasteboard) above, XAML source view below -->
-        <Grid Grid.Row="1" Grid.Column="2">
+        <Grid Grid.Row="2" Grid.Column="2">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition x:Name="DesignSurfaceRow" Height="*" />
@@ -304,7 +356,7 @@
         </Grid>
 
         <!-- Right: file panel + property grid -->
-        <Grid Grid.Row="1" Grid.Column="3">
+        <Grid Grid.Row="2" Grid.Column="3">
             <Grid.RowDefinitions>
                 <RowDefinition x:Name="FilePanelRow" Height="260" />
                 <RowDefinition Height="Auto" />
