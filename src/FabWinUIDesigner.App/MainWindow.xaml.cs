@@ -404,32 +404,104 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    /// <summary>
-    /// Non-recursive: lists .xaml files directly in the chosen folder (name + extension only,
-    /// not the full path - that's shown for whichever item is selected instead). Each .xaml
-    /// node gets its paired .xaml.cs nested under it if one exists on disk, like VS's Solution
-    /// Explorer file nesting - there's no code editor yet, so
-    /// selecting the .cs node just shows its path rather than opening it.
-    /// </summary>
-    /// <param name="folderPath">Absolute path of the folder to list `.xaml` files from.</param>
+    /// <summary>The folder the Explorer is showing, or null before one is opened - kept for Refresh and the search filter, which both rebuild the tree from it.</summary>
+    private string? _explorerFolderPath;
+
+    /// <summary>Shows <paramref name="folderPath"/> in the Explorer, with an empty search filter and the panel's buttons enabled.</summary>
+    /// <param name="folderPath">Absolute path of the folder to list.</param>
     private void PopulateFileTree(string folderPath)
     {
-        FileTreeView.RootNodes.Clear();
+        _explorerFolderPath = folderPath;
+        ExplorerRefreshButton.IsEnabled = ExplorerCollapseAllButton.IsEnabled = ExplorerSearchBox.IsEnabled = true;
 
-        foreach (var xamlPath in Directory.EnumerateFiles(folderPath, "*.xaml").OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
+        // Clearing the box fires TextChanged, which rebuilds the tree. It doesn't fire if the
+        // box was already empty, hence the explicit rebuild in that case.
+        if (ExplorerSearchBox.Text.Length > 0)
         {
-            var node = new TreeViewNode { Content = new FileTreeNodeInfo(Path.GetFileName(xamlPath), xamlPath, IsXaml: true) };
-
-            var codeBehindPath = xamlPath + ".cs";
-            if (File.Exists(codeBehindPath))
-            {
-                node.Children.Add(new TreeViewNode { Content = new FileTreeNodeInfo(Path.GetFileName(codeBehindPath), codeBehindPath, IsXaml: false) });
-                node.IsExpanded = true;
-            }
-
-            FileTreeView.RootNodes.Add(node);
+            ExplorerSearchBox.Text = string.Empty;
+        }
+        else
+        {
+            RebuildFileTree();
         }
     }
+
+    /// <summary>
+    /// Rebuilds the Explorer tree from <see cref="_explorerFolderPath"/>: one root node for the
+    /// folder, then its .xaml files (non-recursive, name + extension only - the full path is
+    /// shown for whichever item is selected instead). Each .xaml node gets its paired .xaml.cs
+    /// nested under it if one exists on disk, like VS's Solution Explorer file nesting - there's
+    /// no code editor yet, so selecting the .cs node just shows its path rather than opening it.
+    /// A non-empty search box keeps only the .xaml files whose own name, or code-behind's name,
+    /// contains the search text (case-insensitive).
+    /// </summary>
+    private void RebuildFileTree()
+    {
+        FileTreeView.RootNodes.Clear();
+        if (_explorerFolderPath is null)
+        {
+            return;
+        }
+
+        var folderName = Path.GetFileName(Path.TrimEndingDirectorySeparator(_explorerFolderPath));
+        var root = new TreeViewNode
+        {
+            Content = new FileTreeNodeInfo(folderName.Length > 0 ? folderName : _explorerFolderPath, _explorerFolderPath, FileTreeNodeKind.Folder),
+            IsExpanded = true,
+        };
+
+        var filter = ExplorerSearchBox.Text.Trim();
+        bool Matches(string path) =>
+            filter.Length == 0 || Path.GetFileName(path).Contains(filter, StringComparison.OrdinalIgnoreCase);
+
+        try
+        {
+            foreach (var xamlPath in Directory.EnumerateFiles(_explorerFolderPath, "*.xaml").OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
+            {
+                var codeBehindPath = xamlPath + ".cs";
+                var hasCodeBehind = File.Exists(codeBehindPath);
+                if (!Matches(xamlPath) && !(hasCodeBehind && Matches(codeBehindPath)))
+                {
+                    continue;
+                }
+
+                var node = new TreeViewNode { Content = new FileTreeNodeInfo(Path.GetFileName(xamlPath), xamlPath, FileTreeNodeKind.Xaml) };
+                if (hasCodeBehind)
+                {
+                    node.Children.Add(new TreeViewNode { Content = new FileTreeNodeInfo(Path.GetFileName(codeBehindPath), codeBehindPath, FileTreeNodeKind.CodeBehind) });
+                    node.IsExpanded = true;
+                }
+
+                root.Children.Add(node);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // The folder was deleted/renamed or became unreadable since it was opened - show the
+            // root alone rather than failing; Refresh tries again.
+            WriteLog($"RebuildFileTree failed: {ex}");
+        }
+
+        FileTreeView.RootNodes.Add(root);
+    }
+
+    /// <summary>Explorer → Refresh: re-reads the folder, e.g. after files were added or removed outside the designer. Keeps the current search filter.</summary>
+    private void ExplorerRefreshButton_Click(object sender, RoutedEventArgs e) => RebuildFileTree();
+
+    /// <summary>Explorer → Collapse All: collapses every file node, leaving just the folder's file list - like VS, which keeps the top node open.</summary>
+    private void ExplorerCollapseAllButton_Click(object sender, RoutedEventArgs e)
+    {
+        foreach (var root in FileTreeView.RootNodes)
+        {
+            foreach (var child in root.Children)
+            {
+                child.IsExpanded = false;
+            }
+        }
+    }
+
+    /// <summary>Filters the Explorer as the user types.</summary>
+    private void ExplorerSearchBox_TextChanged(object sender, TextChangedEventArgs e) => RebuildFileTree();
 
     /// <summary>
     /// Single click just selects and shows the full path; double-click (below) loads it.
@@ -446,21 +518,55 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    /// <summary>Loads the double-tapped file tree node, if it's a `.xaml` node (double-tapping a nested `.xaml.cs` node does nothing - see <see cref="FileTreeNodeInfo"/>).</summary>
+    /// <summary>Loads the double-tapped file tree node, if it's a `.xaml` node (double-tapping the folder or a nested `.xaml.cs` node does nothing - see <see cref="FileTreeNodeInfo"/>).</summary>
     private void FileTreeView_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
     {
-        if (FileTreeView.SelectedNode?.Content is FileTreeNodeInfo { IsXaml: true } info)
+        if (FileTreeView.SelectedNode?.Content is FileTreeNodeInfo { Kind: FileTreeNodeKind.Xaml } info)
         {
             LoadFile(info.FullPath);
         }
     }
 
-    /// <summary>Content of one file-tree node - either a `.xaml` file or a nested `.xaml.cs` code-behind file.</summary>
-    /// <param name="DisplayName">File name shown in the tree (name + extension, no path).</param>
-    /// <param name="FullPath">Absolute path used to load the file or show its path.</param>
-    /// <param name="IsXaml">True for a `.xaml` node (double-click loads it); false for a nested `.xaml.cs` node (there's no code editor yet, so it's display-only).</param>
-    private sealed record FileTreeNodeInfo(string DisplayName, string FullPath, bool IsXaml)
+    /// <summary>What an Explorer node stands for - decides its icon and whether double-click opens it.</summary>
+    private enum FileTreeNodeKind
     {
+        /// <summary>The opened folder (the tree's root).</summary>
+        Folder,
+
+        /// <summary>A `.xaml` file - double-click loads it.</summary>
+        Xaml,
+
+        /// <summary>A `.xaml.cs` code-behind file, nested under its `.xaml`. Display-only: there's no code editor yet.</summary>
+        CodeBehind,
+    }
+
+    /// <summary>Content of one Explorer node. Bound to by the tree's <c>ItemTemplate</c> (icon + name).</summary>
+    /// <param name="DisplayName">Name shown in the tree (name + extension, no path).</param>
+    /// <param name="FullPath">Absolute path used to load the file or show its path.</param>
+    /// <param name="Kind">Folder, XAML file, or code-behind file.</param>
+    private sealed record FileTreeNodeInfo(string DisplayName, string FullPath, FileTreeNodeKind Kind)
+    {
+        // Shared brushes, in VS Solution Explorer's colors: yellow folder, blue XAML, green C#.
+        private static readonly SolidColorBrush FolderBrush = new(Color.FromArgb(0xFF, 0xDC, 0xB6, 0x7A));
+        private static readonly SolidColorBrush XamlBrush = new(Color.FromArgb(0xFF, 0x00, 0x78, 0xD4));
+        private static readonly SolidColorBrush CodeBrush = new(Color.FromArgb(0xFF, 0x38, 0x8A, 0x34));
+
+        /// <summary>Segoe Fluent Icons glyph for this kind: folder, document, or code.</summary>
+        public string Glyph => Kind switch
+        {
+            FileTreeNodeKind.Folder => "",
+            FileTreeNodeKind.Xaml => "",
+            _ => "",
+        };
+
+        /// <summary>Icon color for this kind.</summary>
+        public SolidColorBrush IconBrush => Kind switch
+        {
+            FileTreeNodeKind.Folder => FolderBrush,
+            FileTreeNodeKind.Xaml => XamlBrush,
+            _ => CodeBrush,
+        };
+
         public override string ToString() => DisplayName;
     }
 

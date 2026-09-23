@@ -363,24 +363,60 @@
                 <RowDefinition x:Name="PropertiesRow" Height="*" />
             </Grid.RowDefinitions>
 
-            <!-- File actions live in the main toolbar; this panel only lists the opened folder's files. -->
+            <!-- Explorer, like VS's Solution Explorer: file actions live in the main menu/toolbar,
+                 this panel only lists the opened folder's files, with its own panel-level actions. -->
             <Grid Grid.Row="0" Padding="8" BorderBrush="Gray" BorderThickness="0,0,0,1">
                 <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
 
-                <TextBlock Grid.Row="0" Text="File" FontWeight="Bold" Margin="0,0,0,6" />
+                <Grid Grid.Row="0" Margin="0,0,0,6">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="Explorer" FontWeight="Bold" VerticalAlignment="Center" />
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="2">
+                        <Button x:Name="ExplorerRefreshButton" Click="ExplorerRefreshButton_Click" Padding="4" IsEnabled="False" ToolTipService.ToolTip="Refresh">
+                            <FontIcon Glyph="&#xE72C;" FontSize="12" />
+                        </Button>
+                        <Button x:Name="ExplorerCollapseAllButton" Click="ExplorerCollapseAllButton_Click" Padding="4" IsEnabled="False" ToolTipService.ToolTip="Collapse All">
+                            <FontIcon Glyph="&#xF165;" FontSize="12" />
+                        </Button>
+                    </StackPanel>
+                </Grid>
 
+                <TextBox
+                    x:Name="ExplorerSearchBox"
+                    Grid.Row="1"
+                    Margin="0,0,0,6"
+                    FontSize="12"
+                    PlaceholderText="Search Explorer"
+                    IsEnabled="False"
+                    TextChanged="ExplorerSearchBox_TextChanged" />
+
+                <!-- Populated in code with TreeViewNodes (PopulateFileTree), so each item's
+                     DataContext is its TreeViewNode, and the file info is its Content. -->
                 <TreeView
                     x:Name="FileTreeView"
-                    Grid.Row="1"
+                    Grid.Row="2"
                     SelectionMode="Single"
                     SelectionChanged="FileTreeView_SelectionChanged"
-                    DoubleTapped="FileTreeView_DoubleTapped" />
+                    DoubleTapped="FileTreeView_DoubleTapped">
+                    <TreeView.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <FontIcon Glyph="{Binding Content.Glyph}" Foreground="{Binding Content.IconBrush}" FontSize="14" />
+                                <TextBlock Text="{Binding Content.DisplayName}" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </TreeView.ItemTemplate>
+                </TreeView>
 
-                <TextBlock x:Name="CurrentFileText" Grid.Row="2" Text="(no file open)" TextWrapping="Wrap" FontSize="11" Foreground="Gray" Margin="0,6,0,0" />
+                <TextBlock x:Name="CurrentFileText" Grid.Row="3" Text="(no file open)" TextWrapping="Wrap" FontSize="11" Foreground="Gray" Margin="0,6,0,0" />
             </Grid>
 
             <!-- Draggable splitter: File panel <-> Properties -->
