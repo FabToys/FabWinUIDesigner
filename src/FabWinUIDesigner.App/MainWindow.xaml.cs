@@ -65,6 +65,16 @@ public sealed partial class MainWindow : Window
     // tracked explicitly via this control's own GotFocus/LostFocus instead (see the constructor).
     private bool _xamlSourceViewHasFocus;
 
+    // Apply-after-a-pause for typing in the XAML source view: each keystroke restarts
+    // _sourceEditTimer, and when it fires the typed text is applied (TryApplyXamlSourceEdit).
+    // _sourceEditPending is true while the editor holds typed text not applied yet - it also
+    // counts as "unsaved", so Save lights up while typing. _keepEditorTextOnRefresh stops that
+    // apply's design-surface refresh from rewriting the editor under the user's caret.
+    private static readonly TimeSpan SourceEditApplyDelay = TimeSpan.FromMilliseconds(800);
+    private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _sourceEditTimer;
+    private bool _sourceEditPending;
+    private bool _keepEditorTextOnRefresh;
+
     // TextControlBox.LoadText resets the caret to the start of the document as a side effect,
     // which raises SelectionChanged - the same failure mode already fixed twice before for the
     // old TextBox: a programmatic reload's caret-reset gets misread by
@@ -202,6 +212,11 @@ public sealed partial class MainWindow : Window
         // SelectionChanged's second parameter is a type specific to this control) - implicit-
         // typed lambdas bind against whatever the real delegate is without needing to name it.
         XamlSourceView.SelectionChanged += (_, _) => XamlSourceView_SelectionChanged();
+        XamlSourceView.TextChanged += _ => XamlSourceView_TextChanged();
+        _sourceEditTimer = DispatcherQueue.CreateTimer();
+        _sourceEditTimer.Interval = SourceEditApplyDelay;
+        _sourceEditTimer.IsRepeating = false;
+        _sourceEditTimer.Tick += (_, _) => ApplySourceEditAfterPause();
         XamlSourceView.LostFocus += _ =>
         {
             _xamlSourceViewHasFocus = false;
@@ -2065,8 +2080,11 @@ public sealed partial class MainWindow : Window
 
         try
         {
-            var text = _currentDocument.ToXamlString();
-            if (NormalizeLineEndings(XamlSourceView.Text) != NormalizeLineEndings(text))
+            // Positions come from the editor's own text. It's either the document's text, or an
+            // applied edit not normalized yet (see ApplySourceEditAfterPause) - same elements in
+            // the same order either way. Typed text that isn't applied yet may not be, so skip.
+            var text = NormalizeLineEndings(XamlSourceView.Text);
+            if (_sourceEditPending && text != NormalizeLineEndings(_currentDocument.ToXamlString()))
             {
                 return;
             }
@@ -2115,8 +2133,83 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    /// <summary>Commits whatever's typed in the XAML source view when it loses focus (M6b two-way sync) - the same trigger a real text editor uses for "did the user finish this edit".</summary>
-    private void XamlSourceView_LostFocus() => TryApplyXamlSourceEdit();
+    /// <summary>
+    /// Commits whatever's typed in the XAML source view when it loses focus, then swaps the
+    /// editor text for the document's canonical form if they differ - an apply after a typing
+    /// pause deliberately leaves the typed text as-is (see <see cref="ApplySourceEditAfterPause"/>),
+    /// so leaving the pane is where it gets normalized.
+    /// </summary>
+    private void XamlSourceView_LostFocus()
+    {
+        if (TryApplyXamlSourceEdit() && _currentDocument is not null)
+        {
+            var documentText = _currentDocument.ToXamlString();
+            if (NormalizeLineEndings(XamlSourceView.Text) != NormalizeLineEndings(documentText))
+            {
+                SetXamlSourceText(documentText);
+            }
+        }
+    }
+
+    /// <summary>
+    /// On every user edit in the XAML source view: marks the edit pending (so Save lights up) and
+    /// restarts the pause timer. Programmatic reloads (<see cref="SetXamlSourceText"/>) are ignored,
+    /// and typing that brings the text back to the document's own clears the pending state.
+    /// </summary>
+    private void XamlSourceView_TextChanged()
+    {
+        if (_suppressSourceSelectionSync || _currentDocument is null)
+        {
+            return;
+        }
+
+        _sourceEditTimer.Stop();
+        _sourceEditPending = NormalizeLineEndings(XamlSourceView.Text) != NormalizeLineEndings(_currentDocument.ToXamlString());
+        if (_sourceEditPending)
+        {
+            _sourceEditTimer.Start();
+        }
+
+        UpdateCommandStates();
+    }
+
+    /// <summary>
+    /// Fires once typing has paused for <see cref="SourceEditApplyDelay"/>: applies the typed text
+    /// (or shows its errors) without rewriting the editor under the caret, then re-selects the
+    /// element the caret is in, since the design-surface refresh clears the selection.
+    /// </summary>
+    private void ApplySourceEditAfterPause()
+    {
+        if (!_sourceEditPending)
+        {
+            return;
+        }
+
+        _keepEditorTextOnRefresh = true;
+        bool applied;
+        try
+        {
+            applied = TryApplyXamlSourceEdit();
+        }
+        finally
+        {
+            _keepEditorTextOnRefresh = false;
+        }
+
+        if (applied)
+        {
+            // Deferred until after layout, for the same reason as SelectDocumentRootAfterLayout:
+            // the adorner is placed from the element's laid-out bounds. Right after the refresh
+            // they're not there yet, which puts the adorner in the wrong place for an element
+            // nested in a container (a Button in a StackPanel), where it can't fall back on
+            // Canvas.Left/Top.
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                DesignSurfaceHost.UpdateLayout();
+                XamlSourceView_SelectionChanged();
+            });
+        }
+    }
 
     /// <summary>
     /// Reformats the current document's XAML with consistent indentation
@@ -2164,6 +2257,10 @@ public sealed partial class MainWindow : Window
             return true;
         }
 
+        // Applying now (Ctrl+S, focus loss, Format, or the pause timer itself) - a pending pause
+        // tick would only re-check the same text.
+        _sourceEditTimer.Stop();
+
         // WinUI's TextBox normalizes line endings to '\r' internally, so reading .Text back can
         // legitimately differ from ToXamlString()'s '\r\n' (or whatever the source file used)
         // even when the user hasn't typed anything - comparing normalized copies avoids treating
@@ -2174,6 +2271,7 @@ public sealed partial class MainWindow : Window
         if (NormalizeLineEndings(typedText) == NormalizeLineEndings(currentText))
         {
             SetXamlSourceErrors([]);
+            MarkSourceEditApplied();
             return true;
         }
 
@@ -2198,6 +2296,16 @@ public sealed partial class MainWindow : Window
         }
 
         var parsedText = parsed.ToXamlString();
+
+        // The typed text only differs from the document in formatting the XML object model
+        // doesn't keep (e.g. an editor that still holds <Button/> after the document already has
+        // <Button />) - nothing to commit, and committing would add an empty undo step.
+        if (parsedText == currentText)
+        {
+            SetXamlSourceErrors([]);
+            MarkSourceEditApplied();
+            return true;
+        }
 
         // Well-formed XML isn't the same as valid WinUI XAML - check it actually loads before
         // committing it as the current document. Without this, a typo like "Texte" would parse
@@ -2224,10 +2332,19 @@ public sealed partial class MainWindow : Window
 
         BeginUndoableChange();
         _currentDocument = parsed;
+        _sourceEditPending = false;
         CommitUndoableChange();
         RefreshDesignSurfaceFromDocument();
         SetXamlSourceErrors([]);
+        MarkSourceEditApplied();
         return true;
+    }
+
+    /// <summary>The editor's text is now reflected in the document: clears the pending state and refreshes Save.</summary>
+    private void MarkSourceEditApplied()
+    {
+        _sourceEditPending = false;
+        UpdateCommandStates();
     }
 
     /// <summary>
@@ -2584,8 +2701,19 @@ public sealed partial class MainWindow : Window
     /// <param name="text">The XAML text to display.</param>
     private void SetXamlSourceText(string text)
     {
+        // During an apply after a typing pause, the editor already holds the text being applied
+        // (maybe formatted differently) - reloading it would move the caret to the start while
+        // the user is typing.
+        if (_keepEditorTextOnRefresh)
+        {
+            UpdateCommandStates();
+            return;
+        }
+
         // LoadText, not the Text property - see the comment in FormatDocumentButton_Click for why.
         // Suppressed around the call - see _suppressSourceSelectionSync's own comment for why.
+        _sourceEditTimer.Stop();
+        _sourceEditPending = false;
         _suppressSourceSelectionSync = true;
         try
         {
@@ -2608,7 +2736,8 @@ public sealed partial class MainWindow : Window
     private void UpdateCommandStates()
     {
         var hasDocument = _currentDocument is not null;
-        SaveButton.IsEnabled = SaveMenuItem.IsEnabled = hasDocument && _currentDocument!.ToXamlString() != _lastSavedXaml;
+        // Text typed in the XAML source but not applied yet counts as unsaved too.
+        SaveButton.IsEnabled = SaveMenuItem.IsEnabled = hasDocument && (_sourceEditPending || _currentDocument!.ToXamlString() != _lastSavedXaml);
         SaveAsMenuItem.IsEnabled = hasDocument;
         UndoButton.IsEnabled = UndoMenuItem.IsEnabled = hasDocument && _undoStack.Count > 0;
         RedoButton.IsEnabled = RedoMenuItem.IsEnabled = hasDocument && _redoStack.Count > 0;
