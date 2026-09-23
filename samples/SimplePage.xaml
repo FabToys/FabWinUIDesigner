@@ -1,5 +1,5 @@
 <Page x:Class="FabWinUIDesigner.Samples.SimplePage" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:d="http://schemas.microsoft.com/expression/blend/2008" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="d">
-    <Canvas Width="400" Height="300" Background="White" Canvas.Left="0" Canvas.Top="-0.8">
+    <Canvas Width="400" Height="300" Background="White">
         <TextBlock x:Name="TitleText" Canvas.Left="20" Canvas.Top="20" Text="Hello, Designer" FontSize="20" />
         <Button x:Name="OkButton" Canvas.Left="287.2" Canvas.Top="256" Content="OK" Width="100" Height="32" Click="OkButton_Click" IsEnabled="True" />
         <CheckBox x:Name="CheckBox1" Canvas.Left="22.4" Canvas.Top="251.2" Content="CheckBox" />
