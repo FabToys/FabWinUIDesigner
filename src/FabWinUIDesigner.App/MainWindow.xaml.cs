@@ -239,7 +239,7 @@ public sealed partial class MainWindow : Window
     /// <summary>Starts a blank document, confirming discard first if the current one has unsaved changes.</summary>
     private async void NewButton_Click(object sender, RoutedEventArgs e)
     {
-        // SaveButton.IsEnabled doubles as our "is dirty" flag (see UpdateSaveButtonState) - ask
+        // SaveButton.IsEnabled doubles as our "is dirty" flag (see UpdateToolbarButtonStates) - ask
         // for confirmation only when there's actually something that would be lost.
         if (SaveButton.IsEnabled)
         {
@@ -272,7 +272,7 @@ public sealed partial class MainWindow : Window
 
         RefreshDesignSurfaceFromDocument();
         SelectDocumentRootAfterLayout();
-        UpdateSaveButtonState();
+        UpdateToolbarButtonStates();
     }
 
     /// <summary>Prompts for a `.xaml` file via the file picker and loads it.</summary>
@@ -333,7 +333,7 @@ public sealed partial class MainWindow : Window
 
         _currentDocument.Save(_currentFilePath);
         _lastSavedXaml = _currentDocument.ToXamlString();
-        UpdateSaveButtonState();
+        UpdateToolbarButtonStates();
         AddRecentFile(_currentFilePath);
         SyncEventHandlerStubs();
     }
@@ -2416,6 +2416,10 @@ public sealed partial class MainWindow : Window
         _undoStack.Push(_pendingUndoSnapshot);
         _redoStack.Clear();
         _pendingUndoSnapshot = null;
+
+        // Most commits are followed by a source-view refresh that updates the toolbar anyway,
+        // but not all of them - doing it here too keeps Undo/Redo from ever lagging behind.
+        UpdateToolbarButtonStates();
     }
 
     /// <summary>Restores the document to the top of the undo stack, pushing the current state onto redo first.</summary>
@@ -2429,6 +2433,7 @@ public sealed partial class MainWindow : Window
         _redoStack.Push(_currentDocument.ToXamlString());
         _currentDocument = XamlDocument.Parse(_undoStack.Pop());
         RefreshDesignSurfaceFromDocument();
+        UpdateToolbarButtonStates();
     }
 
     /// <summary>Restores the document to the top of the redo stack, pushing the current state onto undo first.</summary>
@@ -2442,6 +2447,7 @@ public sealed partial class MainWindow : Window
         _undoStack.Push(_currentDocument.ToXamlString());
         _currentDocument = XamlDocument.Parse(_redoStack.Pop());
         RefreshDesignSurfaceFromDocument();
+        UpdateToolbarButtonStates();
     }
 
     /// <summary>
@@ -2469,14 +2475,29 @@ public sealed partial class MainWindow : Window
             _suppressSourceSelectionSync = false;
         }
 
-        UpdateSaveButtonState();
+        UpdateToolbarButtonStates();
     }
 
-    /// <summary>Enabled only when the in-memory document differs from what's actually on disk (compared against the text as of the last load/save).</summary>
-    private void UpdateSaveButtonState()
+    /// <summary>
+    /// Enables/disables the main toolbar's document buttons: Save only when the in-memory
+    /// document differs from what's actually on disk (compared against the text as of the last
+    /// load/save), Undo/Redo only when their stack has something to restore, and Format only
+    /// when a document is open.
+    /// </summary>
+    private void UpdateToolbarButtonStates()
     {
-        SaveButton.IsEnabled = _currentDocument is not null && _currentDocument.ToXamlString() != _lastSavedXaml;
+        var hasDocument = _currentDocument is not null;
+        SaveButton.IsEnabled = hasDocument && _currentDocument!.ToXamlString() != _lastSavedXaml;
+        UndoButton.IsEnabled = hasDocument && _undoStack.Count > 0;
+        RedoButton.IsEnabled = hasDocument && _redoStack.Count > 0;
+        FormatToolbarButton.IsEnabled = hasDocument;
     }
+
+    /// <summary>Toolbar Undo - same as Ctrl+Z, but without Ctrl+Z's focus guard: clicking the button is an explicit document-level undo, so it never competes with a text field's own undo.</summary>
+    private void UndoButton_Click(object sender, RoutedEventArgs e) => Undo();
+
+    /// <summary>Toolbar Redo - same as Ctrl+Y (see <see cref="UndoButton_Click"/>).</summary>
+    private void RedoButton_Click(object sender, RoutedEventArgs e) => Redo();
 
     /// <summary>Drag-resizes a column by attaching pointer handlers directly to a splitter element - there's no built-in GridSplitter in the WinUI SDK.</summary>
     /// <param name="splitter">The draggable splitter element (a <see cref="SplitterThumb"/> in practice, for its hover cursor - see <see cref="CursorGrid"/>).</param>

@@ -6,6 +6,10 @@
     xmlns:tcb="using:TextControlBoxNS">
 
     <Grid x:Name="RootGrid" KeyDown="RootGrid_KeyDown">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
         <Grid.ColumnDefinitions>
             <ColumnDefinition x:Name="ToolboxColumn" Width="160" />
             <ColumnDefinition Width="Auto" />
@@ -13,8 +17,51 @@
             <ColumnDefinition Width="260" />
         </Grid.ColumnDefinitions>
 
+        <!-- Main toolbar: document-level actions, full width across the window like VS's standard
+             toolbar. View settings (Snap to Grid, Alphabetical View) stay in their own panels'
+             toolbars instead, since they belong to that view rather than to the document.
+             Plain icon Buttons rather than a CommandBar, to keep the compact VS look -
+             CommandBar's default height and label/overflow behaviour are touch-first. -->
+        <Border Grid.Row="0" Grid.ColumnSpan="4" Background="#FFF3F3F3" BorderBrush="Gray" BorderThickness="0,0,0,1" Padding="4">
+            <StackPanel Orientation="Horizontal" Spacing="2">
+                <Button x:Name="NewButton" Click="NewButton_Click" Padding="6,4" ToolTipService.ToolTip="New File">
+                    <FontIcon Glyph="&#xE7C3;" FontSize="14" />
+                </Button>
+                <Button x:Name="OpenButton" Click="OpenButton_Click" Padding="6,4" ToolTipService.ToolTip="Open File...">
+                    <FontIcon Glyph="&#xE8E5;" FontSize="14" />
+                </Button>
+                <Button x:Name="OpenFolderButton" Click="OpenFolderButton_Click" Padding="6,4" ToolTipService.ToolTip="Open Folder...">
+                    <FontIcon Glyph="&#xE8DA;" FontSize="14" />
+                </Button>
+                <Button x:Name="SaveButton" Click="SaveButton_Click" Padding="6,4" IsEnabled="False" ToolTipService.ToolTip="Save (Ctrl+S)">
+                    <FontIcon Glyph="&#xE74E;" FontSize="14" />
+                </Button>
+                <Button x:Name="RecentButton" Padding="6,4" ToolTipService.ToolTip="Recent Files and Folders">
+                    <FontIcon Glyph="&#xE81C;" FontSize="14" />
+                    <Button.Flyout>
+                        <MenuFlyout x:Name="RecentFlyout" Placement="Bottom" />
+                    </Button.Flyout>
+                </Button>
+
+                <Border Width="1" Background="Gray" Margin="4,4" />
+
+                <Button x:Name="UndoButton" Click="UndoButton_Click" Padding="6,4" IsEnabled="False" ToolTipService.ToolTip="Undo (Ctrl+Z)">
+                    <FontIcon Glyph="&#xE7A7;" FontSize="14" />
+                </Button>
+                <Button x:Name="RedoButton" Click="RedoButton_Click" Padding="6,4" IsEnabled="False" ToolTipService.ToolTip="Redo (Ctrl+Y)">
+                    <FontIcon Glyph="&#xE7A6;" FontSize="14" />
+                </Button>
+
+                <Border Width="1" Background="Gray" Margin="4,4" />
+
+                <Button x:Name="FormatToolbarButton" Click="FormatDocumentButton_Click" Padding="6,4" IsEnabled="False" ToolTipService.ToolTip="Format Document">
+                    <FontIcon Glyph="&#xE8E4;" FontSize="14" />
+                </Button>
+            </StackPanel>
+        </Border>
+
         <!-- Toolbox - items are built in code (MainWindow.BuildToolbox) from PropertyGridSchema.ToolboxControlTypes, itself read from Metadata/PropertyMetadata.json, instead of one hardcoded Button per control type here. -->
-        <Border Grid.Column="0" BorderBrush="Gray" BorderThickness="0,0,1,0">
+        <Border Grid.Row="1" Grid.Column="0" BorderBrush="Gray" BorderThickness="0,0,1,0">
             <StackPanel Padding="8" Spacing="4">
                 <TextBlock Text="Toolbox" FontWeight="Bold" Margin="0,0,0,8" />
                 <StackPanel x:Name="ToolboxItemsPanel" Spacing="4" />
@@ -22,10 +69,10 @@
         </Border>
 
         <!-- Draggable splitter: Toolbox <-> Center -->
-        <local:SplitterThumb x:Name="ToolboxSplitter" Grid.Column="1" Width="8" Background="#FFE0E0E0" HorizontalAlignment="Stretch" />
+        <local:SplitterThumb x:Name="ToolboxSplitter" Grid.Row="1" Grid.Column="1" Width="8" Background="#FFE0E0E0" HorizontalAlignment="Stretch" />
 
         <!-- Center: design surface (pasteboard) above, XAML source view below -->
-        <Grid Grid.Column="2">
+        <Grid Grid.Row="1" Grid.Column="2">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition x:Name="DesignSurfaceRow" Height="*" />
@@ -257,16 +304,16 @@
         </Grid>
 
         <!-- Right: file panel + property grid -->
-        <Grid Grid.Column="3">
+        <Grid Grid.Row="1" Grid.Column="3">
             <Grid.RowDefinitions>
                 <RowDefinition x:Name="FilePanelRow" Height="260" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition x:Name="PropertiesRow" Height="*" />
             </Grid.RowDefinitions>
 
+            <!-- File actions live in the main toolbar; this panel only lists the opened folder's files. -->
             <Grid Grid.Row="0" Padding="8" BorderBrush="Gray" BorderThickness="0,0,0,1">
                 <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                     <RowDefinition Height="Auto" />
@@ -274,35 +321,14 @@
 
                 <TextBlock Grid.Row="0" Text="File" FontWeight="Bold" Margin="0,0,0,6" />
 
-                <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="4" Margin="0,0,0,6">
-                    <Button x:Name="NewButton" Click="NewButton_Click" Padding="6,4" ToolTipService.ToolTip="New File">
-                        <FontIcon Glyph="&#xE7C3;" FontSize="14" />
-                    </Button>
-                    <Button x:Name="OpenFolderButton" Click="OpenFolderButton_Click" Padding="6,4" ToolTipService.ToolTip="Open Folder...">
-                        <FontIcon Glyph="&#xE8DA;" FontSize="14" />
-                    </Button>
-                    <Button x:Name="OpenButton" Click="OpenButton_Click" Padding="6,4" ToolTipService.ToolTip="Open File...">
-                        <FontIcon Glyph="&#xE8E5;" FontSize="14" />
-                    </Button>
-                    <Button x:Name="SaveButton" Click="SaveButton_Click" Padding="6,4" IsEnabled="False" ToolTipService.ToolTip="Save">
-                        <FontIcon Glyph="&#xE74E;" FontSize="14" />
-                    </Button>
-                    <Button x:Name="RecentButton" Padding="6,4" ToolTipService.ToolTip="Recent Files and Folders">
-                        <FontIcon Glyph="&#xE81C;" FontSize="14" />
-                        <Button.Flyout>
-                            <MenuFlyout x:Name="RecentFlyout" Placement="Bottom" />
-                        </Button.Flyout>
-                    </Button>
-                </StackPanel>
-
                 <TreeView
                     x:Name="FileTreeView"
-                    Grid.Row="2"
+                    Grid.Row="1"
                     SelectionMode="Single"
                     SelectionChanged="FileTreeView_SelectionChanged"
                     DoubleTapped="FileTreeView_DoubleTapped" />
 
-                <TextBlock x:Name="CurrentFileText" Grid.Row="3" Text="(no file open)" TextWrapping="Wrap" FontSize="11" Foreground="Gray" Margin="0,6,0,0" />
+                <TextBlock x:Name="CurrentFileText" Grid.Row="2" Text="(no file open)" TextWrapping="Wrap" FontSize="11" Foreground="Gray" Margin="0,6,0,0" />
             </Grid>
 
             <!-- Draggable splitter: File panel <-> Properties -->
