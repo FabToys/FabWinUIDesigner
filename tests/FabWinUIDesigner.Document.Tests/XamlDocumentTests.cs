@@ -12,8 +12,7 @@ public class XamlDocumentTests
     /// <summary>
     /// Structural comparison, not raw text equality: whitespace *between attributes* in a
     /// start tag isn't part of the XML object model (only whitespace between elements is),
-    /// so it can't survive a save regardless of how careful the writer is. See
-    /// research/01-xml-roundtrip-formatting.md.
+    /// so it can't survive a save regardless of how careful the writer is.
     /// </summary>
     private static void AssertSemanticallyEqual(string expectedXaml, string actualXaml)
     {
@@ -34,7 +33,7 @@ public class XamlDocumentTests
         Assert.AreEqual("400", canvas.GetAttribute("Width"));
 
         // Not an exact count/order: SimplePage.xaml is also the app's own default sample, so
-        // manual testing (e.g. via the M5 toolbox) legitimately adds more children over time.
+        // manual testing (e.g. via the toolbox) legitimately adds more children over time.
         // What must always hold is that the two originally-authored elements are still there.
         var canvasChildren = canvas.Children.ToList();
         Assert.IsTrue(canvasChildren.Count >= 2);
@@ -86,7 +85,7 @@ public class XamlDocumentTests
     public void ToFormattedXamlString_AddsConsistentIndentation()
     {
         // Deliberately messy - mirrors the real "elements crammed onto one line" state AddChild
-        // used to produce before it inserted a newline (see research/25); ToFormattedXamlString
+        // used to produce before it inserted a newline; ToFormattedXamlString
         // should clean this up regardless of how the input got that way.
         const string messy =
             "<Page xmlns=\"http://schemas.microsoft.com/winfx/2006/xaml/presentation\" xmlns:x=\"http://schemas.microsoft.com/winfx/2006/xaml\">\n" +

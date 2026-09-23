@@ -14,8 +14,7 @@ namespace FabWinUIDesigner.CodeGen;
 public sealed record EventHandlerStub(string EventName, string MethodName, string SenderTypeName, string EventArgsTypeName);
 
 /// <summary>
-/// Roslyn syntax-tree based inserter for XAML event-handler stubs (M7 - see
-/// research/43-m7-event-codegen-plan.md). Framework-agnostic on purpose: callers (the App layer,
+/// Roslyn syntax-tree based inserter for XAML event-handler stubs. Framework-agnostic on purpose: callers (the App layer,
 /// which already knows how to reflect a live WinUI type for its event delegate signatures - see
 /// MainWindow.FindUnknownPropertyErrors) supply fully-qualified sender/event-args type names, so
 /// this project never needs a WinUI dependency or any <c>using</c>-directive bookkeeping.

@@ -6,8 +6,11 @@ namespace FabWinUIDesigner.Core;
 /// Produces design-time-safe copies of a XAML document's text for feeding to
 /// <see cref="Microsoft.UI.Xaml.Markup.XamlReader"/>. x:Class and event-handler attributes
 /// reference code-behind members that don't exist in the designer's own assembly, so loose
-/// XamlReader.Load can fail on them - see research/02-xamlreader-event-handlers.md for what
-/// actually happens and why these two strip levels exist. The original document/file is never
+/// XamlReader.Load can fail on them. In practice x:Class always throws
+/// (<c>xClassCanOnlyBeUsedOnLoadComponent</c> - it's a compile-time directive tied to
+/// <c>InitializeComponent</c> codegen, which loose loading has no path to), while unresolved
+/// event-handler attributes have so far loaded fine - hence two strip levels: x:Class only
+/// first, then x:Class plus events as a last resort. The original document/file is never
 /// touched by this; it only ever affects the design-time preview text handed to the loader.
 /// </summary>
 public static class XamlPreviewSanitizer

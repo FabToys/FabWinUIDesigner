@@ -19,11 +19,11 @@
     <ProjectReference Include="..\FabWinUIDesigner.Document\FabWinUIDesigner.Document.csproj" />
   </ItemGroup>
 
-  <!-- Property/event grid metadata, and the Toolbox's control list (research/46/47) - a loose
-       content file copied next to the exe (not embedded), so Fabrice can add a property/event/
-       toolbox entry by editing the JSON and restarting the app, no rebuild needed. This is static
+  <!-- Property/event grid metadata, and the Toolbox's control list - a loose
+       content file copied next to the exe (not embedded), so a property/event/
+       toolbox entry can be added by editing the JSON and restarting the app, no rebuild needed. This is static
        app-shipped data read from AppContext.BaseDirectory, not user data, so it doesn't hit the
-       unpackaged-app ApplicationData.Current gotcha from research/15 (that was about *writing*
+       unpackaged-app ApplicationData.Current gotcha (it throws without package identity; that was about *writing*
        user state, not reading a file next to the exe). ProjectReference transitively copies a
        referenced project's own CopyToOutputDirectory content into the referencing app's output. -->
   <ItemGroup>

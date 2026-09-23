@@ -13,7 +13,7 @@
             <ColumnDefinition Width="260" />
         </Grid.ColumnDefinitions>
 
-        <!-- Toolbox - items are built in code (MainWindow.BuildToolbox) from PropertyGridSchema.ToolboxControlTypes, itself read from Metadata/PropertyMetadata.json (research/47), instead of one hardcoded Button per control type here. -->
+        <!-- Toolbox - items are built in code (MainWindow.BuildToolbox) from PropertyGridSchema.ToolboxControlTypes, itself read from Metadata/PropertyMetadata.json, instead of one hardcoded Button per control type here. -->
         <Border Grid.Column="0" BorderBrush="Gray" BorderThickness="0,0,1,0">
             <StackPanel Padding="8" Spacing="4">
                 <TextBlock Text="Toolbox" FontWeight="Bold" Margin="0,0,0,8" />
@@ -43,7 +43,7 @@
                         Padding="6"
                         Checked="SnapToGridToggle_Toggled"
                         Unchecked="SnapToGridToggle_Toggled"
-                        ToolTipService.ToolTip="Snap to Grid (research/48-snap-to-grid.md)">
+                        ToolTipService.ToolTip="Snap to Grid">
                         <FontIcon Glyph="&#xE80A;" FontSize="14" />
                     </ToggleButton>
                 </StackPanel>
@@ -73,7 +73,7 @@
                              background; not hit-test-visible so clicks/drags still reach the design
                              surface underneath. Dots are plain Rectangles added/cleared in code
                              (RenderGridOverlay), sized to match DesignSurfaceHost via its SizeChanged
-                             handler. research/48-snap-to-grid.md. -->
+                             handler. -->
                         <Canvas
                             x:Name="GridOverlay"
                             Margin="16"
@@ -85,7 +85,7 @@
                         <!-- Selection adorner overlay: same Margin/alignment as DesignSurfaceHost so their
                              local (0,0) coincide, letting TransformToVisual(DesignSurfaceHost) bounds be
                              used directly as Canvas.Left/Top here. Not hit-test-disabled at the Canvas
-                             level (unlike M3) since the resize handles now need real pointer input; the
+                             level (unlike earlier versions) since the resize handles now need real pointer input; the
                              decorative pieces (rectangle/label) opt out individually instead. -->
                         <Canvas
                             x:Name="AdornerCanvas"
@@ -113,7 +113,7 @@
 
                             <!-- Resize handles: 4 corners + 4 edge midpoints, VS-style small squares.
                                  local:ResizeHandle (not a plain Rectangle) so hover can show a resize
-                                 cursor - see research/17-resize-handle-hover-cursor.md. -->
+                                 cursor. -->
                             <local:ResizeHandle x:Name="HandleNW" Tag="NW" Visibility="Collapsed" Width="7" Height="7" PointerPressed="ResizeHandle_PointerPressed" PointerMoved="ResizeHandle_PointerMoved" PointerReleased="ResizeHandle_PointerReleased" PointerCaptureLost="ResizeHandle_PointerReleased">
                                 <Rectangle Fill="White" Stroke="#FF5B7C99" StrokeThickness="1" />
                             </local:ResizeHandle>
@@ -161,9 +161,9 @@
                         Padding="6,2"
                         FontSize="11"
                         Content="Format"
-                        ToolTipService.ToolTip="Reformat the XAML source with consistent indentation (research/29-format-document-plan.md)" />
+                        ToolTipService.ToolTip="Reformat the XAML source with consistent indentation" />
                     <!-- Collapsed until SetXamlSourceErrors(non-empty) shows it - a second, harder-to-miss
-                         cue than the Errors tab alone (see research/23-xaml-error-tabs.md). Clicking it
+                         cue than the Errors tab alone. Clicking it
                          jumps straight to the Errors tab. -->
                     <Button
                         x:Name="XamlSourceWarningButton"
@@ -178,10 +178,10 @@
                 </StackPanel>
 
                 <Grid Grid.Row="1">
-                    <!-- TextControlBox (research/40), not a plain TextBox: a from-scratch,
+                    <!-- TextControlBox, not a plain TextBox: a from-scratch,
                          Win2D-rendered WinUI 3 editor control (MIT, FrozenAssassine/
                          TextControlBox-WinUI) that renders its own syntax coloring natively -
-                         unlike RichEditBox (research/37-39), it isn't routed through any
+                         unlike RichEditBox, it isn't routed through any
                          non-public WinRT interface, so no `dynamic` workarounds are needed here.
                          Its own line-numbering gutter replaces the plain text pane's implicit
                          one. SelectionChanged/LostFocus/GotFocus are wired in code-behind
@@ -245,7 +245,7 @@
                     </Grid>
                 </Grid>
 
-                <!-- Tab strip goes BELOW its content (Fabrice's ask), unlike a normal top-tabbed
+                <!-- Tab strip goes BELOW its content, unlike a normal top-tabbed
                      control - WinUI's TabView always puts headers on top with no supported way to
                      move them, so this is two plain Buttons with manually managed selected/error
                      styling (UpdateXamlPaneTabButtonVisuals) rather than a real tab control. -->
@@ -315,9 +315,9 @@
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
 
-                <!-- Properties/Events tab pair (M7 - research/44), on top per Fabrice's ask -
-                     unlike the XAML pane's Source/Errors tabs (deliberately below their content,
-                     per his separate earlier ask there - see research/23) - scrolling to find
+                <!-- Properties/Events tab pair, on top -
+                     unlike the XAML pane's Source/Errors tabs (deliberately below their content)
+                     - scrolling to find
                      Events under Properties was inconvenient, so they're now two switchable
                      panels instead of one long scrolling list. -->
                 <Grid Grid.Row="0" BorderBrush="Gray" BorderThickness="0,0,0,1">
@@ -332,7 +332,7 @@
                     </StackPanel>
 
                     <!-- Same icon-toolbar pattern as the design surface's Snap to Grid button
-                         (research/48) - drives both the Properties and Events grids together. -->
+                         - drives both the Properties and Events grids together. -->
                     <ToggleButton
                         x:Name="AlphabeticalViewToggle"
                         Grid.Column="1"
@@ -340,7 +340,7 @@
                         Margin="0,0,2,0"
                         Checked="AlphabeticalViewToggle_Toggled"
                         Unchecked="AlphabeticalViewToggle_Toggled"
-                        ToolTipService.ToolTip="Alphabetical View (research/52-property-grid-alphabetical-view.md)">
+                        ToolTipService.ToolTip="Alphabetical View">
                         <FontIcon Glyph="&#xE8CB;" FontSize="14" />
                     </ToggleButton>
                 </Grid>

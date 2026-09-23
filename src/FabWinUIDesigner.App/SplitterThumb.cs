@@ -9,8 +9,7 @@ namespace FabWinUIDesigner.App;
 /// can never show a custom cursor no matter what code-behind does to it. Grid (not Border or
 /// Rectangle - both sealed in this SDK and can't be subclassed at all) is the base here so the
 /// existing visual (a solid-color splitter, or a Rectangle nested inside a resize handle) keeps
-/// working unchanged. See research/16-splitter-hover-cursor.md and
-/// research/17-resize-handle-hover-cursor.md.
+/// working unchanged.
 /// </summary>
 public class CursorGrid : Grid
 {

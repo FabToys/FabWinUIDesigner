@@ -7,7 +7,7 @@ namespace FabWinUIDesigner.Document;
 /// <summary>
 /// The designer's source of truth for a `.xaml` file: an <see cref="XDocument"/> loaded with
 /// whitespace preserved, so that saving back out without further edits reproduces the
-/// original text (see research/01-xml-roundtrip-formatting.md for how far that holds).
+/// original text (as far as the XML object model allows - see <see cref="ToFormattedXamlString"/>).
 /// </summary>
 public sealed class XamlDocument
 {
@@ -54,12 +54,12 @@ public sealed class XamlDocument
     /// <summary>
     /// Serializes the document with consistent indentation instead of preserving whatever
     /// whitespace it already had - for an explicit "Format Document" action, not the normal
-    /// save/round-trip path (which deliberately preserves original formatting - see
-    /// research/01-xml-roundtrip-formatting.md - so opening a file and changing nothing doesn't
+    /// save/round-trip path (which deliberately preserves original formatting,
+    /// so opening a file and changing nothing doesn't
     /// produce a reformat-sized diff). Doesn't wrap a long start tag's attributes one-per-line -
-    /// tried in research/50-format-document-attribute-wrapping.md and reverted: whitespace
+    /// tried and reverted: whitespace
     /// *between attributes inside a tag* isn't representable in the XML object model at all (the
-    /// same limitation research/01 documents for hand-edited multi-line xmlns blocks), so any
+    /// same limitation that affects hand-edited multi-line xmlns blocks), so any
     /// wrapping is destroyed the instant the text is re-parsed - which the app's normal
     /// edit-commit pipeline (parse-then-redisplay) always does, including right after the Format
     /// button's own click handler applies it. Not fixable within this method alone.

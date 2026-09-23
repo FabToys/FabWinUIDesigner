@@ -9,8 +9,8 @@
                      from here and fail at the native layer without it - most simpler controls
                      (Button, TextBox, ...) happened to tolerate its absence, which is how this
                      went unnoticed until TreeView was added. Standard in every real WinUI3 app;
-                     our hand-authored App.xaml (no project template was used, see
-                     research/03-m0-notes.md) never had it. -->
+                     our hand-authored App.xaml (no project template was used)
+                     never had it. -->
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
             </ResourceDictionary.MergedDictionaries>
         </ResourceDictionary>

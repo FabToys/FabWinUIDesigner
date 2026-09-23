@@ -2,13 +2,13 @@ namespace FabWinUIDesigner.Core;
 
 /// <summary>One event-grid row: the XAML event name and which category group it shows under.</summary>
 /// <param name="Name">The event name - used both as the attribute name and to look up the live event via reflection (see MainWindow.ApplyEventEdit).</param>
-/// <param name="Category">Display group, e.g. "Action"/"Selection" - same reasoning as <see cref="PropertyDescriptor.Category"/> (research/46): curated, since WinUI exposes no equivalent metadata to reflect this from.</param>
+/// <param name="Category">Display group, e.g. "Action"/"Selection" - same reasoning as <see cref="PropertyDescriptor.Category"/>: curated, since WinUI exposes no equivalent metadata to reflect this from.</param>
 public sealed record EventDescriptor(string Name, string Category);
 
 /// <summary>
-/// The curated per-control-type "common events" list for the MVP property grid's Events section
-/// (M7 - research/43-m7-event-codegen-plan.md), loaded from the loose
-/// <c>Metadata/EventMetadata.json</c> next to the app's .exe (research/46/47). Same reasoning as
+/// The curated per-control-type "common events" list for the MVP property grid's Events section,
+/// loaded from the loose
+/// <c>Metadata/EventMetadata.json</c> next to the app's .exe. Same reasoning as
 /// <see cref="PropertyGridSchema"/>: WinUI controls carry no design-time metadata that could
 /// drive this automatically, so it's an explicit list. Deliberately narrower than "every event
 /// this type has" - just the ones a WinForms/WPF designer would typically surface by default.

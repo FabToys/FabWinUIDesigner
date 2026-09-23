@@ -45,12 +45,11 @@ public sealed partial class MainWindow : Window
     private const double MinElementSize = 8;
     private const double HandleSize = 7;
 
-    // Snap-to-grid (research/48-snap-to-grid.md). Spacing isn't user-configurable yet - noted as
-    // a follow-up, not built, same as research/14's original sketch left it undecided.
+    // Snap-to-grid. Spacing isn't user-configurable yet - a possible follow-up.
     private const double GridSpacing = 8;
     private bool _snapToGridEnabled;
 
-    // Property/Events grid view toggle (research/52-property-grid-alphabetical-view.md) - one
+    // Property/Events grid view toggle - one
     // flag drives both grids, since they share BuildCategorizedGrid.
     private bool _alphabeticalPropertyView;
 
@@ -67,7 +66,7 @@ public sealed partial class MainWindow : Window
 
     // TextControlBox.LoadText resets the caret to the start of the document as a side effect,
     // which raises SelectionChanged - the same failure mode already fixed twice before for the
-    // old TextBox (research/25, /32, /33): a programmatic reload's caret-reset gets misread by
+    // old TextBox: a programmatic reload's caret-reset gets misread by
     // XamlSourceView_SelectionChanged as "the user moved the caret", re-selecting whatever
     // element now sits at offset 0. This time it's worse than a wrong selection - re-selecting
     // tears down and rebuilds the property grid (BuildPropertyGrid clears PropertyGridPanel),
@@ -136,8 +135,7 @@ public sealed partial class MainWindow : Window
         Closed += (_, _) => SavePanelLayout();
 
         // Hover cursor: a plain <Grid> can't show one (UIElement.ProtectedCursor is protected),
-        // hence SplitterThumb/ResizeHandle - see their doc comment / research/16-splitter-hover-cursor.md
-        // and research/17-resize-handle-hover-cursor.md.
+        // hence SplitterThumb/ResizeHandle - see their doc comment.
         ToolboxSplitter.SetCursor(InputSystemCursorShape.SizeWestEast);
         DesignXamlSplitter.SetCursor(InputSystemCursorShape.SizeNorthSouth);
         FilePropertiesSplitter.SetCursor(InputSystemCursorShape.SizeNorthSouth);
@@ -180,13 +178,13 @@ public sealed partial class MainWindow : Window
         // *whole* tag including every attribute, and its attribute-name and attribute-value
         // colors happen to be the exact same green in light theme - so a multi-attribute line
         // like the root Page/Canvas's xmlns block rendered as "tag name, then everything else in
-        // one solid color" instead of readable syntax coloring (found via Fabrice's own
+        // one solid color" instead of readable syntax coloring (found in
         // interactive testing). XamlSyntaxHighlightingJson below is a custom scheme instead -
         // separate regexes for the tag name, each attribute name, and each quoted value, so they
         // never collapse into one match or share a color. Verified against real WinRT-projected
         // JSON parsing (Newtonsoft.Json under the hood - a plain JSON array for Filter, which the
         // library's own type expects as a pipe-delimited *string*, silently failed to deserialize)
-        // with a throwaway probe before trusting it here - same technique as research/35.
+        // with a throwaway probe before trusting it here.
         XamlSourceView.EnableSyntaxHighlighting = true;
         var xamlHighlighting = TextControlBox.GetSyntaxHighlightingFromJson(XamlSyntaxHighlightingJson);
         if (xamlHighlighting.Succeed)
@@ -212,7 +210,7 @@ public sealed partial class MainWindow : Window
     /// <c>TextControlBox.GetSyntaxHighlightingFromJson</c>'s own JSON shape (its
     /// <c>JsonSyntaxHighlighting</c> DTO - <c>Filter</c> is a pipe-delimited <em>string</em>, not
     /// a JSON array, confirmed via a throwaway probe against the real package before trusting it
-    /// here). Colors follow Visual Studio's classic XML/XAML editor palette (research/35): element
+    /// here). Colors follow Visual Studio's classic XML/XAML editor palette: element
     /// names maroon, attribute names red, quoted values blue, comments green - each its own
     /// regex, deliberately narrower than the built-in XML language's single whole-tag regex (see
     /// the comment in the constructor for why that one looked broken on real XAML).
@@ -360,7 +358,7 @@ public sealed partial class MainWindow : Window
     /// Non-recursive: lists .xaml files directly in the chosen folder (name + extension only,
     /// not the full path - that's shown for whichever item is selected instead). Each .xaml
     /// node gets its paired .xaml.cs nested under it if one exists on disk, like VS's Solution
-    /// Explorer file nesting - there's no code editor yet (that's later, around M7/M8), so
+    /// Explorer file nesting - there's no code editor yet, so
     /// selecting the .cs node just shows its path rather than opening it.
     /// </summary>
     /// <param name="folderPath">Absolute path of the folder to list `.xaml` files from.</param>
@@ -637,8 +635,7 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Loads a design-time preview of the document. The M2 spike (see
-    /// research/02-xamlreader-event-handlers.md) confirmed loose XamlReader.Load
+    /// Loads a design-time preview of the document. Testing confirmed loose XamlReader.Load
     /// deterministically throws on x:Class, so we skip straight to stripping it instead of
     /// trying the raw text first - trying it anyway would throw every single time (visible as
     /// a first-chance XamlParseException that trips debugger breakpoints on thrown exceptions,
@@ -694,7 +691,7 @@ public sealed partial class MainWindow : Window
 
     /// <summary>
     /// Populates the Toolbox from <see cref="PropertyGridSchema.ToolboxControlTypes"/> - the same
-    /// JSON file that drives the property grid (research/47), so adding a control type to the
+    /// JSON file that drives the property grid, so adding a control type to the
     /// app means editing one file instead of also hand-adding a XAML `Button` here.
     /// </summary>
     private void BuildToolbox()
@@ -730,8 +727,7 @@ public sealed partial class MainWindow : Window
     /// <summary>
     /// Adds a new element of the given type (e.g. "Button") as a child of the root Canvas,
     /// with sensible defaults, then does a full reload and selects it so the user can
-    /// immediately drag it into place. v1 only supports a Canvas root (see
-    /// research/00-scope-and-decisions.md), so this doesn't attempt to target nested containers.
+    /// immediately drag it into place. v1 only supports a Canvas root, so this doesn't attempt to target nested containers.
     /// </summary>
     /// <param name="localName">The XAML element name to add, e.g. "Button" (must be one of the types <see cref="ApplyDefaultAttributes"/> knows defaults for).</param>
     private void AddControl(string localName)
@@ -859,7 +855,7 @@ public sealed partial class MainWindow : Window
     /// selects the right element but with a zero-sized adorner rectangle - the selection label
     /// shows fine (it sizes to its own text, not to the selected element's bounds), but the
     /// dashed border doesn't, since <c>ActualWidth</c>/<c>ActualHeight</c> are still 0 at that
-    /// point (see research/34-select-root-adorner-timing.md). Same fix already used for the
+    /// point. Same fix already used for the
     /// debug preview snapshot in <see cref="RefreshDesignSurfaceFromDocument"/> - force a layout
     /// pass first via <c>UpdateLayout()</c>, deferred onto the dispatcher queue since layout
     /// itself only happens asynchronously, not synchronously when a Child is assigned.
@@ -876,7 +872,7 @@ public sealed partial class MainWindow : Window
     /// <summary>
     /// Selects the document's root design element (its first child - typically the root Canvas,
     /// e.g. in SimplePage.xaml) right after loading/creating a document, instead of leaving
-    /// nothing selected (or, before research/32-select-root-on-load.md's fix, whatever the old
+    /// nothing selected (or, before this was added, whatever the old
     /// caret-to-end-of-text side effect happened to land on). Called (deferred - see
     /// <see cref="SelectDocumentRootAfterLayout"/>) after
     /// <see cref="RefreshDesignSurfaceFromDocument"/>.
@@ -971,7 +967,7 @@ public sealed partial class MainWindow : Window
             // _moveElement in PointerPressed, so without this check every single click would
             // count as a "move to the same position" - pushing a no-op undo entry and, worse,
             // refreshing the XAML source view, which resets its caret to the end of the text
-            // (see SetXamlSourceText) and - via the source->design caret sync (#25) - re-selects
+            // (see SetXamlSourceText) and - via the source->design caret sync - re-selects
             // whatever element that happens to land on, undoing the click's own selection.
             if (newLeft != _moveStartLeft || newTop != _moveStartTop)
             {
@@ -1256,10 +1252,10 @@ public sealed partial class MainWindow : Window
         RefreshDesignSurfaceFromDocument();
     }
 
-    /// <summary>Display order for property-grid categories (research/46) - anything from the JSON not listed here falls back to alphabetical, after these.</summary>
+    /// <summary>Display order for property-grid categories - anything from the JSON not listed here falls back to alphabetical, after these.</summary>
     private static readonly string[] PropertyCategoryOrder = ["Common Properties", "Text", "Layout", "Appearance"];
 
-    /// <summary>Display order for the Events tab's categories (research/46).</summary>
+    /// <summary>Display order for the Events tab's categories.</summary>
     private static readonly string[] EventCategoryOrder = ["Action", "Text", "Selection"];
 
     /// <summary>Two-column name/value layout grouped by category, matching the WPF/WinForms Properties window.</summary>
@@ -1282,12 +1278,11 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Rebuilds the Events tab's own panel (M7 - research/43/44) for whichever common events
+    /// Rebuilds the Events tab's own panel for whichever common events
     /// this element's type has (<see cref="EventGridSchema"/>) - a small "(no events)" note for
     /// a type with none, e.g. <c>TextBlock</c>, rather than leaving the previous selection's
     /// rows stale on screen. A separate panel/tab from Properties, not a sub-section of it -
-    /// scrolling to find Events under a long property list was inconvenient (Fabrice's
-    /// feedback), so they're now switchable via <see cref="PropertiesTabButton"/>/
+    /// scrolling to find Events under a long property list was inconvenient, so they're now switchable via <see cref="PropertiesTabButton"/>/
     /// <see cref="EventsTabButton"/> instead of stacked in one scrolling list.
     /// </summary>
     /// <param name="designElement">The selected element to show events for.</param>
@@ -1312,11 +1307,11 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Shared Properties/Events grid builder (research/46): groups <paramref name="descriptors"/>
+    /// Shared Properties/Events grid builder: groups <paramref name="descriptors"/>
     /// under a bold category header row per distinct <c>Category</c> - the WPF-style "Arrange by
-    /// Category" view from Fabrice's screenshot - or, when <paramref name="alphabetical"/> is
-    /// true, one flat list sorted by name with no category headers at all
-    /// (research/52-property-grid-alphabetical-view.md). Categories in
+    /// Category" view of WPF's Properties window - or, when <paramref name="alphabetical"/> is
+    /// true, one flat list sorted by name with no category headers at all.
+    /// Categories in
     /// <paramref name="categoryOrder"/> are shown first in that order; any other category found in
     /// the data (e.g. a typo'd JSON value) still shows, alphabetically, after - so a bad category
     /// name is visible instead of silently dropping properties.
@@ -1387,8 +1382,8 @@ public sealed partial class MainWindow : Window
     /// Creates the shared two-column grid shell (label column fixed at 90px, editor column
     /// stretches) used by both the Properties and Events tabs, with a light gray outer border -
     /// row/column divider lines are added per-cell by <see cref="AddGridCell"/>, matching the
-    /// visible gridlines of a WinForms <c>PropertyGrid</c> (Fabrice's ask - the previous plain
-    /// spacing-only layout had no visible row/column separators).
+    /// visible gridlines of a WinForms <c>PropertyGrid</c> (a plain
+    /// spacing-only layout has no visible row/column separators).
     /// </summary>
     /// <param name="rowCount">Total rows the grid will hold, including category header rows.</param>
     /// <param name="gridLineBrush">Outputs the brush used for the divider lines, so callers add cells with a matching color.</param>
@@ -1416,7 +1411,7 @@ public sealed partial class MainWindow : Window
     /// <summary>Font size used throughout the Properties/Events grids - smaller than controls' 14px default, matching the compact look of a WinForms <c>PropertyGrid</c>.</summary>
     private const double GridCellFontSize = 11;
 
-    /// <summary>Adds one category header row (bold label, light gray background, spans both columns) - the group separators from Fabrice's WPF Properties-window screenshot.</summary>
+    /// <summary>Adds one category header row (bold label, light gray background, spans both columns) - the group separators of WPF's Properties window.</summary>
     private static void AddCategoryHeaderCell(Grid grid, string category, int row, SolidColorBrush gridLineBrush)
     {
         var header = new TextBlock
@@ -1444,7 +1439,7 @@ public sealed partial class MainWindow : Window
     /// row gets a bottom divider line and the label column gets a right divider line (the last
     /// row skips its bottom line since the grid's own outer border already supplies it). Also
     /// shrinks whichever control was passed in to the compact row height of a VS Properties
-    /// window (Fabrice's ask) - editors (<see cref="TextBox"/>/<see cref="ComboBox"/>/
+    /// window - editors (<see cref="TextBox"/>/<see cref="ComboBox"/>/
     /// <see cref="CheckBox"/>) and the row labels (<see cref="TextBlock"/>) don't share a common
     /// "has FontSize/Padding" base, so this is a switch rather than one assignment.
     /// </summary>
@@ -1482,7 +1477,7 @@ public sealed partial class MainWindow : Window
         grid.Children.Add(cell);
     }
 
-    /// <summary>Creates the property grid's editor control for one property - a <see cref="CheckBox"/>, <see cref="ComboBox"/>, or plain <see cref="TextBox"/> depending on the property's live CLR type (<see cref="PropertyKindResolver"/>, research/46) - wired to call <see cref="ApplyPropertyEdit"/> when its value changes.</summary>
+    /// <summary>Creates the property grid's editor control for one property - a <see cref="CheckBox"/>, <see cref="ComboBox"/>, or plain <see cref="TextBox"/> depending on the property's live CLR type (<see cref="PropertyKindResolver"/>) - wired to call <see cref="ApplyPropertyEdit"/> when its value changes.</summary>
     /// <param name="designElement">The selected element the property belongs to.</param>
     /// <param name="descriptor">Describes the property's name and category.</param>
     /// <param name="liveType">The selected live element's CLR type, used to reflect the actual property and so its editor kind - <c>null</c> falls back to a plain text editor (nothing selected).</param>
@@ -1492,7 +1487,7 @@ public sealed partial class MainWindow : Window
         // "Name" is x:Name (a namespaced attribute, via DesignElement.Name), not a plain
         // unprefixed "Name" attribute - same special case ApplyPropertyEdit already applies on
         // the write side (see its own comment); this was missing here on the read side, so the
-        // field always displayed blank regardless of what was actually set (research/51).
+        // field always displayed blank regardless of what was actually set.
         var currentText = descriptor.Name == "Name"
             ? designElement.Name ?? string.Empty
             : designElement.GetAttribute(descriptor.Name) ?? string.Empty;
@@ -1645,7 +1640,7 @@ public sealed partial class MainWindow : Window
         UpdateAdornerToMatch(_selectedLiveElement);
     }
 
-    /// <summary>Creates the Events section's editor for one event - always a plain <see cref="TextBox"/> for the handler method name (M7 - research/43), wired to call <see cref="ApplyEventEdit"/> when it loses focus.</summary>
+    /// <summary>Creates the Events section's editor for one event - always a plain <see cref="TextBox"/> for the handler method name, wired to call <see cref="ApplyEventEdit"/> when it loses focus.</summary>
     /// <param name="designElement">The selected element the event belongs to.</param>
     /// <param name="descriptor">Describes the event's name.</param>
     /// <returns>The editor control, ready to place in the Events section.</returns>
@@ -1682,8 +1677,8 @@ public sealed partial class MainWindow : Window
         RefreshXamlSourceView();
 
         // No per-edit codegen here - stubs are generated for the whole document at once, on
-        // Save (SyncEventHandlerStubs), per Fabrice's expectation that this happens at save time
-        // rather than on every field blur.
+        // Save (SyncEventHandlerStubs) - code files should change at save time, not on every
+        // field blur.
     }
 
     /// <summary>True for a string that's a valid, unqualified C# identifier - good enough for a generated method name without pulling in a full C# lexer for it.</summary>
@@ -1694,9 +1689,9 @@ public sealed partial class MainWindow : Window
     /// Scans the whole document for every event attribute currently set on any element (per
     /// <see cref="EventGridSchema"/>'s curated per-type list) and makes sure a matching stub
     /// method exists for each in the document's paired `.xaml.cs` file
-    /// (<see cref="EventHandlerCodeGen"/> - M7, research/43/44). Called after a successful save,
+    /// (<see cref="EventHandlerCodeGen"/>). Called after a successful save,
     /// not on every event-field edit - generating (and writing to disk) on every field blur, before
-    /// the document itself is even saved, surprised Fabrice in testing.
+    /// the document itself is even saved, would be surprising.
     /// Quietly does nothing if the document has no `x:Class` (hand-authored XAML with no
     /// code-behind class to generate into) or no event attributes are actually set anywhere -
     /// both are legitimate states, not errors.
@@ -1846,10 +1841,10 @@ public sealed partial class MainWindow : Window
     /// <summary>
     /// Selects whichever design element the source view's caret currently sits on/in, so
     /// navigating XAML text also drives the design-surface selection - one-directional by
-    /// design (research/33-one-way-caret-sync.md): an earlier version also moved the source
+    /// design: an earlier version also moved the source
     /// caret to match whenever a control was selected *on the design surface*, but that made it
     /// impossible to click in the whitespace gap between two elements without the caret
-    /// immediately snapping back to the preceding tag, and Fabrice found it more disruptive than
+    /// immediately snapping back to the preceding tag, which proved more disruptive than
     /// useful in practice - selecting on the design surface no longer touches the source pane's
     /// caret at all. Only acts while the source view's text matches the current document exactly
     /// (normalizing line endings, same as <see cref="TryApplyXamlSourceEdit"/>)
@@ -1982,7 +1977,7 @@ public sealed partial class MainWindow : Window
     /// Reformats the current document's XAML with consistent indentation
     /// (<see cref="XamlDocument.ToFormattedXamlString"/>) and commits it through the exact same
     /// pipeline any other source edit goes through - not a separate code path, so it's
-    /// undo-tracked and re-validated for free. See research/29-format-document-plan.md.
+    /// undo-tracked and re-validated for free.
     /// </summary>
     private void FormatDocumentButton_Click(object sender, RoutedEventArgs e)
     {
@@ -2312,7 +2307,7 @@ public sealed partial class MainWindow : Window
         ErrorsTabButton.Foreground = new SolidColorBrush(hasError ? Colors.Red : Colors.Black);
     }
 
-    /// <summary>Which of the right panel's two tabs is currently showing (M7 - research/44).</summary>
+    /// <summary>Which of the right panel's two tabs is currently showing.</summary>
     private enum PropertyPaneTab
     {
         Properties,
@@ -2337,7 +2332,7 @@ public sealed partial class MainWindow : Window
 
     private void EventsTabButton_Click(object sender, RoutedEventArgs e) => ShowPropertyPaneTab(PropertyPaneTab.Events);
 
-    /// <summary>Switches which of the Properties/Events panels is visible and updates the tab buttons to match. Deliberately doesn't reset to Properties on every new selection - if Fabrice is looking at Events and picks a different control, staying on Events is less disruptive than snapping back.</summary>
+    /// <summary>Switches which of the Properties/Events panels is visible and updates the tab buttons to match. Deliberately doesn't reset to Properties on every new selection - if the user is looking at Events and picks a different control, staying on Events is less disruptive than snapping back.</summary>
     /// <param name="tab">The panel to show.</param>
     private void ShowPropertyPaneTab(PropertyPaneTab tab)
     {
@@ -2425,10 +2420,10 @@ public sealed partial class MainWindow : Window
     /// the end of the text here, so a change that landed outside the currently-scrolled-into-view
     /// area (e.g. a newly added element, appended near the end) would still scroll into view -
     /// but on every full reload (e.g. opening a file) that instead landed on whichever element
-    /// happened to be last in the document, and the source->design caret sync (#25) read that as
-    /// "select the last element" (research/32-select-root-on-load.md). Removed for good in
-    /// research/33-one-way-caret-sync.md, once design->source caret syncing (the thing this was
-    /// originally for) was removed entirely at Fabrice's request.
+    /// happened to be last in the document, and the source->design caret sync read that as
+    /// "select the last element". Removed for good
+    /// once design->source caret syncing (the thing this was
+    /// originally for) was removed entirely.
     /// </summary>
     /// <param name="text">The XAML text to display.</param>
     private void SetXamlSourceText(string text)
@@ -2507,8 +2502,8 @@ public sealed partial class MainWindow : Window
     /// Same as <see cref="AttachColumnSplitter"/> but for a row's height instead of a column's
     /// width. <paramref name="invert"/> flips the drag direction for splitters whose controlled
     /// row comes *before* (above) the splitter in the pointer-delta math but is visually the one
-    /// below it in layout terms - see research/13-splitter-direction-cursor-undo.md for why this
-    /// is needed for the design-surface/XAML-source splitter specifically but not the others.
+    /// below it in layout terms - needed for the design-surface/XAML-source splitter specifically but not
+    /// the others.
     /// </summary>
     /// <param name="splitter">The draggable splitter element.</param>
     /// <param name="row">The row whose <see cref="RowDefinition.Height"/> the drag adjusts.</param>
@@ -2561,8 +2556,8 @@ public sealed partial class MainWindow : Window
     /// <param name="ToolboxWidth">Width of the toolbox column.</param>
     /// <param name="FilePanelHeight">Height of the file-browser panel row.</param>
     /// <param name="XamlSourceHeight">Height of the XAML source pane row.</param>
-    /// <param name="SnapToGrid">Whether snap-to-grid was enabled. Defaults to false so layout files saved before research/48 still deserialize.</param>
-    /// <param name="AlphabeticalPropertyView">Whether the Properties/Events grids were showing the flat alphabetical view. Defaults to false (category-grouped) so layout files saved before research/52 still deserialize.</param>
+    /// <param name="SnapToGrid">Whether snap-to-grid was enabled. Defaults to false so layout files saved before this setting existed still deserialize.</param>
+    /// <param name="AlphabeticalPropertyView">Whether the Properties/Events grids were showing the flat alphabetical view. Defaults to false (category-grouped) so layout files saved before this setting existed still deserialize.</param>
     private sealed record PanelLayout(double ToolboxWidth, double FilePanelHeight, double XamlSourceHeight, bool SnapToGrid = false, bool AlphabeticalPropertyView = false);
 
     /// <summary>Restores panel sizes from <see cref="LayoutConfigPath"/>, leaving the XAML-declared defaults in place if the file is missing or unreadable.</summary>

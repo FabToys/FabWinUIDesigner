@@ -4,9 +4,9 @@ namespace FabWinUIDesigner.Core;
 
 /// <summary>
 /// Shared loader for the JSON metadata files behind <see cref="PropertyGridSchema"/> and
-/// <see cref="EventGridSchema"/> (research/46/47) - a loose file next to the app's own .exe
-/// (<see cref="AppContext.BaseDirectory"/>), not embedded, so Fabrice can edit a property/event/
-/// toolbox entry and just restart the app, no rebuild.
+/// <see cref="EventGridSchema"/> - a loose file next to the app's own .exe
+/// (<see cref="AppContext.BaseDirectory"/>), not embedded, so editing a property/event/
+/// toolbox entry only needs an app restart, no rebuild.
 /// </summary>
 internal static class ControlMetadataLoader
 {

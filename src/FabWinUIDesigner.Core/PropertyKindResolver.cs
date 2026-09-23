@@ -6,7 +6,7 @@ namespace FabWinUIDesigner.Core;
 
 /// <summary>
 /// Resolves a <see cref="PropertyEditorKind"/> (and, for an enum property, its allowed values)
-/// straight off the live control's actual CLR property type - see research/46. This is what lets
+/// straight off the live control's actual CLR property type. This is what lets
 /// <see cref="PropertyGridSchema"/>'s JSON stay to just Name/Category: which editor a property
 /// needs was never real "metadata" to curate, it's already fully determined by the property's own
 /// .NET type.
