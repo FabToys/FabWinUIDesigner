@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text;
 using System.Text.Json;
@@ -27,6 +28,7 @@ using DesignElement = FabWinUIDesigner.Document.DesignElement;
 using XamlDocument = FabWinUIDesigner.Document.XamlDocument;
 using XamlSourcePositions = FabWinUIDesigner.Document.XamlSourcePositions;
 using DocumentSession = FabWinUIDesigner.Document.DocumentSession;
+using DiskState = FabWinUIDesigner.Document.DiskState;
 
 namespace FabWinUIDesigner.App;
 
@@ -139,6 +141,7 @@ public sealed partial class MainWindow : Window
         AttachRowSplitter(DesignXamlSplitter, XamlSourceRow, minHeight: 80, maxHeight: 600, SavePanelLayout, invert: true);
         AttachRowSplitter(FilePropertiesSplitter, FilePanelRow, minHeight: 80, maxHeight: 600, SavePanelLayout);
         Closed += (_, _) => SavePanelLayout();
+        Activated += MainWindow_Activated;
 
         // Hover cursor: a plain <Grid> can't show one (UIElement.ProtectedCursor is protected),
         // hence SplitterThumb/ResizeHandle - see their doc comment.
@@ -712,7 +715,8 @@ public sealed partial class MainWindow : Window
 
     /// <summary>Loads a `.xaml` file as the current document, resets undo/redo and dirty-tracking, refreshes the design surface, and adds it to Recent Files. On failure, shows the error in the status bar instead of throwing.</summary>
     /// <param name="path">Absolute path of the `.xaml` file to load.</param>
-    private void LoadFile(string path)
+    /// <returns>True if the file was loaded.</returns>
+    private bool LoadFile(string path)
     {
         try
         {
@@ -723,11 +727,109 @@ public sealed partial class MainWindow : Window
             SelectDocumentRootAfterLayout();
             AddRecentFile(path);
             SetStatus($"Opened {Path.GetFileName(path)}");
+            return true;
         }
         catch (Exception ex)
         {
             SetStatus($"Failed to open {Path.GetFileName(path)}: {ex.Message}");
+            return false;
         }
+    }
+
+    // Set while CheckForExternalChangesAsync runs: its own dialog closing re-activates the window,
+    // which must not start a second check.
+    private bool _checkingExternalChanges;
+
+    /// <summary>When the window gets focus back, checks whether the open file was changed outside the designer.</summary>
+    private async void MainWindow_Activated(object sender, Microsoft.UI.Xaml.WindowActivatedEventArgs args)
+    {
+        if (args.WindowActivationState == Microsoft.UI.Xaml.WindowActivationState.Deactivated || _checkingExternalChanges || _session is null)
+        {
+            return;
+        }
+
+        _checkingExternalChanges = true;
+        try
+        {
+            await CheckForExternalChangesAsync();
+        }
+        finally
+        {
+            _checkingExternalChanges = false;
+        }
+    }
+
+    /// <summary>
+    /// VS-style handling of a change made to the open file by another program, checked when the
+    /// designer window is activated rather than with a file watcher - nothing pops up while you're
+    /// working in the other program, and several saves there become one question here.
+    /// Changed: ask Reload / Keep my version (always asked, even with no unsaved changes, so
+    /// nothing changes under you unannounced). Deleted or renamed: say so and keep the document
+    /// open. Keeping either way marks the document unsaved, so the next Save deliberately writes
+    /// this version over the outside change.
+    /// </summary>
+    private async Task CheckForExternalChangesAsync()
+    {
+        var session = _session;
+        var path = session?.FilePath;
+        if (session is null || path is null)
+        {
+            return;
+        }
+
+        var state = session.CheckDisk();
+        if (state == DiskState.Unchanged)
+        {
+            return;
+        }
+
+        var name = Path.GetFileName(path);
+        var dialog = state == DiskState.Changed
+            ? new ContentDialog
+            {
+                Title = "File changed outside the designer",
+                Content = SaveButton.IsEnabled
+                    ? $"{name} was changed by another program.\n\nReload it? Your unsaved changes in the designer will be lost."
+                    : $"{name} was changed by another program.\n\nReload it?",
+                PrimaryButtonText = "Reload",
+                CloseButtonText = "Keep my version",
+                DefaultButton = ContentDialogButton.Primary,
+                XamlRoot = Content.XamlRoot,
+            }
+            : new ContentDialog
+            {
+                Title = "File deleted or renamed",
+                Content = $"{name} no longer exists at:\n{path}\n\nIt stays open here, marked as unsaved. Save writes it back, or use Save As to put it somewhere else.",
+                CloseButtonText = "OK",
+                XamlRoot = Content.XamlRoot,
+            };
+
+        ContentDialogResult result;
+        try
+        {
+            result = await dialog.ShowAsync();
+        }
+        catch (COMException)
+        {
+            // Another ContentDialog is already open (only one can be at a time). The disk state
+            // wasn't accepted, so the next activation asks again.
+            return;
+        }
+
+        if (state == DiskState.Changed && result == ContentDialogResult.Primary)
+        {
+            if (LoadFile(path))
+            {
+                SetStatus($"Reloaded {name}");
+            }
+
+            return;
+        }
+
+        session.AcceptDiskState();
+        session.MarkModified();
+        UpdateCommandStates();
+        SetStatus(state == DiskState.Changed ? $"Kept the designer's version of {name}" : $"{name} was deleted or renamed");
     }
 
     /// <summary>

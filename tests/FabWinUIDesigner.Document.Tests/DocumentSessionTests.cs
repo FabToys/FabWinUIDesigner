@@ -121,4 +121,90 @@ public class DocumentSessionTests
         Assert.ThrowsExactly<InvalidOperationException>(() => NewSession().Save());
     }
 
+    /// <summary>Runs <paramref name="test"/> against a session opened on a fresh temp file, deleting it afterwards.</summary>
+    private static void WithSavedFile(Action<DocumentSession, string> test)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"DocumentSessionTests-{Guid.NewGuid():N}.xaml");
+        try
+        {
+            File.WriteAllText(path, Xaml);
+            test(DocumentSession.Open(path), path);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [TestMethod]
+    public void CheckDisk_AfterOpen_IsUnchanged()
+    {
+        WithSavedFile((session, _) => Assert.AreEqual(DiskState.Unchanged, session.CheckDisk()));
+    }
+
+    [TestMethod]
+    public void CheckDisk_AfterOutsideEdit_IsChanged_UntilAccepted()
+    {
+        WithSavedFile((session, path) =>
+        {
+            File.WriteAllText(path, Xaml.Replace("400", "900"));
+            Assert.AreEqual(DiskState.Changed, session.CheckDisk());
+
+            session.AcceptDiskState();
+            Assert.AreEqual(DiskState.Unchanged, session.CheckDisk());
+        });
+    }
+
+    [TestMethod]
+    public void CheckDisk_FileOnlyTouched_IsUnchanged()
+    {
+        WithSavedFile((session, path) =>
+        {
+            File.SetLastWriteTimeUtc(path, DateTime.UtcNow.AddMinutes(5));
+            Assert.AreEqual(DiskState.Unchanged, session.CheckDisk());
+        });
+    }
+
+    [TestMethod]
+    public void CheckDisk_AfterOwnSave_IsUnchanged()
+    {
+        WithSavedFile((session, _) =>
+        {
+            SetWidth(session, "500");
+            session.Save();
+            Assert.AreEqual(DiskState.Unchanged, session.CheckDisk());
+        });
+    }
+
+    [TestMethod]
+    public void CheckDisk_FileDeleted_IsMissing_UntilAccepted()
+    {
+        WithSavedFile((session, path) =>
+        {
+            File.Delete(path);
+            Assert.AreEqual(DiskState.Missing, session.CheckDisk());
+
+            session.AcceptDiskState();
+            Assert.AreEqual(DiskState.Unchanged, session.CheckDisk());
+        });
+    }
+
+    [TestMethod]
+    public void CheckDisk_NeverSavedDocument_IsUnchanged()
+    {
+        Assert.AreEqual(DiskState.Unchanged, NewSession().CheckDisk());
+    }
+
+    [TestMethod]
+    public void MarkModified_StaysModified_UntilSave()
+    {
+        WithSavedFile((session, _) =>
+        {
+            session.MarkModified();
+            Assert.IsTrue(session.IsModified);
+
+            session.Save();
+            Assert.IsFalse(session.IsModified);
+        });
+    }
 }

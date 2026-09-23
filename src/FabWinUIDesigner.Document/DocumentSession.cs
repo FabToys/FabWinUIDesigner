@@ -1,5 +1,18 @@
 namespace FabWinUIDesigner.Document;
 
+/// <summary>How the file on disk compares with what a <see cref="DocumentSession"/> last loaded or saved.</summary>
+public enum DiskState
+{
+    /// <summary>Same content as last loaded/saved (or the document has never been saved).</summary>
+    Unchanged,
+
+    /// <summary>Another program changed the file's content.</summary>
+    Changed,
+
+    /// <summary>The file was deleted or renamed.</summary>
+    Missing,
+}
+
 /// <summary>
 /// One open XAML file: its in-memory <see cref="XamlDocument"/>, where it lives on disk, its
 /// undo/redo history, and whether it has unsaved changes. The designer's view state (the live
@@ -22,6 +35,16 @@ public sealed class DocumentSession
     // back to that exact state counts as unmodified again.
     private string _lastSavedXaml;
 
+    // Set by MarkModified (e.g. the file was changed or deleted on disk and the user kept this
+    // version): unsaved regardless of the text comparison, until the next Save.
+    private bool _forcedModified;
+
+    // What the file looked like on disk as of the last load/save/AcceptDiskState, for CheckDisk.
+    // A null _diskWriteTimeUtc means it was missing then.
+    private DateTime? _diskWriteTimeUtc;
+    private long _diskLength;
+    private string? _diskText;
+
     /// <summary>Starts a session on an already-parsed document, with no history and nothing unsaved.</summary>
     /// <param name="document">The document to edit.</param>
     /// <param name="filePath">Where it's saved, or null for a new file that hasn't been saved yet.</param>
@@ -30,6 +53,7 @@ public sealed class DocumentSession
         Document = document;
         FilePath = filePath;
         _lastSavedXaml = document.ToXamlString();
+        AcceptDiskState();
     }
 
     /// <summary>Loads a `.xaml` file into a new session.</summary>
@@ -44,7 +68,7 @@ public sealed class DocumentSession
     public string? FilePath { get; private set; }
 
     /// <summary>True when the document differs from what was last loaded or saved.</summary>
-    public bool IsModified => Document.ToXamlString() != _lastSavedXaml;
+    public bool IsModified => _forcedModified || Document.ToXamlString() != _lastSavedXaml;
 
     /// <summary>True when <see cref="Undo"/> has something to restore.</summary>
     public bool CanUndo => _undoStack.Count > 0;
@@ -100,6 +124,80 @@ public sealed class DocumentSession
         Document.Save(target);
         FilePath = target;
         _lastSavedXaml = Document.ToXamlString();
+        _forcedModified = false;
+        AcceptDiskState();
+    }
+
+    /// <summary>Marks the document as having unsaved changes until the next <see cref="Save"/>, even if its text matches what was last saved.</summary>
+    public void MarkModified() => _forcedModified = true;
+
+    /// <summary>
+    /// Compares the file on disk with what this session last loaded, saved or accepted: first its
+    /// last-write time and length, then - only if those differ - its text, so a file that was just
+    /// touched (new time, same content) still counts as unchanged. A read that fails (e.g. the file
+    /// is locked mid-write by the other program) also counts as unchanged, so the caller simply
+    /// checks again later.
+    /// </summary>
+    /// <returns>The file's state; always <see cref="DiskState.Unchanged"/> for a document never saved.</returns>
+    public DiskState CheckDisk()
+    {
+        if (FilePath is null)
+        {
+            return DiskState.Unchanged;
+        }
+
+        try
+        {
+            var file = new FileInfo(FilePath);
+            if (!file.Exists)
+            {
+                return _diskWriteTimeUtc is null ? DiskState.Unchanged : DiskState.Missing;
+            }
+
+            if (file.LastWriteTimeUtc == _diskWriteTimeUtc && file.Length == _diskLength)
+            {
+                return DiskState.Unchanged;
+            }
+
+            if (File.ReadAllText(FilePath) == _diskText)
+            {
+                AcceptDiskState();
+                return DiskState.Unchanged;
+            }
+
+            return DiskState.Changed;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return DiskState.Unchanged;
+        }
+    }
+
+    /// <summary>Records the file's current state on disk as the new baseline for <see cref="CheckDisk"/>, e.g. after the user chose to keep this version over an outside change.</summary>
+    public void AcceptDiskState()
+    {
+        _diskWriteTimeUtc = null;
+        _diskLength = 0;
+        _diskText = null;
+        if (FilePath is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var file = new FileInfo(FilePath);
+            if (file.Exists)
+            {
+                _diskText = File.ReadAllText(FilePath);
+                _diskWriteTimeUtc = file.LastWriteTimeUtc;
+                _diskLength = file.Length;
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Unreadable right now - leave the baseline empty; the next check sees a change and asks.
+        }
     }
 
     private bool Restore(Stack<string> from, Stack<string> pushCurrentOnto)
