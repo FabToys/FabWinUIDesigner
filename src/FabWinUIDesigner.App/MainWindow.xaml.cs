@@ -26,6 +26,7 @@ using FabWinUIDesigner.Core;
 using DesignElement = FabWinUIDesigner.Document.DesignElement;
 using XamlDocument = FabWinUIDesigner.Document.XamlDocument;
 using XamlSourcePositions = FabWinUIDesigner.Document.XamlSourcePositions;
+using DocumentSession = FabWinUIDesigner.Document.DocumentSession;
 
 namespace FabWinUIDesigner.App;
 
@@ -54,8 +55,11 @@ public sealed partial class MainWindow : Window
     // flag drives both grids, since they share BuildCategorizedGrid.
     private bool _alphabeticalPropertyView;
 
-    private string? _currentFilePath;
-    private XamlDocument? _currentDocument;
+    // The open file (document, path, undo/redo, saved state), or null before one is opened.
+    // CurrentDocument/CurrentFilePath are shorthands for its two most-used parts.
+    private DocumentSession? _session;
+    private XamlDocument? CurrentDocument => _session?.Document;
+    private string? CurrentFilePath => _session?.FilePath;
     private IReadOnlyDictionary<UIElement, DesignElement> _liveToDesign = new Dictionary<UIElement, DesignElement>();
     private UIElement? _selectedLiveElement;
     private DesignElement? _selectedDesignElement;
@@ -87,19 +91,6 @@ public sealed partial class MainWindow : Window
     // under a control mid-dispatch. Set around every SetXamlSourceText call so its caret reset
     // can never drive a reselect; real user caret movement is unaffected.
     private bool _suppressSourceSelectionSync;
-
-    // Undo/Redo: whole-document text snapshots rather than a command pattern - simple, and
-    // cheap enough at our document sizes. _pendingUndoSnapshot is set by BeginUndoableChange()
-    // right before a mutation starts and consumed by CommitUndoableChange() right after it
-    // succeeds, so an edit that's validated-and-rejected (e.g. bad property input) never
-    // pollutes the undo stack.
-    private readonly Stack<string> _undoStack = new();
-    private readonly Stack<string> _redoStack = new();
-    private string? _pendingUndoSnapshot;
-
-    // Dirty tracking for the Save button: compared against the document text as of the last
-    // load/save, not a simple bool, so undoing back to that exact state re-disables Save too.
-    private string? _lastSavedXaml;
 
     // Move drag state (set while a PointerPressed-on-an-element -> PointerMoved -> PointerReleased
     // sequence is in progress on DesignSurfaceHost).
@@ -297,15 +288,8 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        // Same reset as LoadFile, but from the blank template and with no path yet.
-        var doc = XamlDocument.Parse(NewDocumentTemplate);
-        _currentDocument = doc;
-        _currentFilePath = null;
-
-        _undoStack.Clear();
-        _redoStack.Clear();
-        _pendingUndoSnapshot = null;
-        _lastSavedXaml = doc.ToXamlString();
+        // Same as LoadFile, but from the blank template and with no path yet.
+        _session = new DocumentSession(XamlDocument.Parse(NewDocumentTemplate), filePath: null);
 
         RefreshDesignSurfaceFromDocument();
         SelectDocumentRootAfterLayout();
@@ -351,19 +335,21 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        if (_currentDocument is null)
+        var session = _session;
+        if (session is null)
         {
             return;
         }
 
         // A document created via New File has no path yet - prompt for one, same as "Save As".
-        if (_currentFilePath is null || saveAs)
+        string? newPath = null;
+        if (session.FilePath is null || saveAs)
         {
             var picker = new FileSavePicker();
             var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
             WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
             picker.FileTypeChoices.Add("XAML File", new List<string> { ".xaml" });
-            picker.SuggestedFileName = _currentFilePath is null ? "NewPage" : Path.GetFileNameWithoutExtension(_currentFilePath);
+            picker.SuggestedFileName = session.FilePath is null ? "NewPage" : Path.GetFileNameWithoutExtension(session.FilePath);
 
             var file = await picker.PickSaveFileAsync();
             if (file is null)
@@ -371,14 +357,13 @@ public sealed partial class MainWindow : Window
                 return;
             }
 
-            _currentFilePath = file.Path;
+            newPath = file.Path;
         }
 
-        _currentDocument.Save(_currentFilePath);
-        _lastSavedXaml = _currentDocument.ToXamlString();
+        session.Save(newPath);
         UpdateCommandStates();
-        SetStatus($"Saved {Path.GetFileName(_currentFilePath)}");
-        AddRecentFile(_currentFilePath);
+        SetStatus($"Saved {Path.GetFileName(session.FilePath)}");
+        AddRecentFile(session.FilePath!);
         SyncEventHandlerStubs();
     }
 
@@ -731,15 +716,8 @@ public sealed partial class MainWindow : Window
     {
         try
         {
-            var doc = XamlDocument.Load(path);
-            _currentDocument = doc;
-            _currentFilePath = path;
-
             // A freshly-loaded file has no undo history and nothing unsaved yet.
-            _undoStack.Clear();
-            _redoStack.Clear();
-            _pendingUndoSnapshot = null;
-            _lastSavedXaml = doc.ToXamlString();
+            _session = DocumentSession.Open(path);
 
             RefreshDesignSurfaceFromDocument();
             SelectDocumentRootAfterLayout();
@@ -754,18 +732,18 @@ public sealed partial class MainWindow : Window
 
     /// <summary>
     /// Re-renders the design surface, XAML source pane, and live/design element correlation
-    /// from <see cref="_currentDocument"/>'s current in-memory state - used both after opening
+    /// from <see cref="CurrentDocument"/>'s current in-memory state - used both after opening
     /// a file and after any structural edit (e.g. adding a toolbox control), since those need
     /// a full XamlReader reload rather than an incremental live-object tweak.
     /// </summary>
     private void RefreshDesignSurfaceFromDocument()
     {
-        if (_currentDocument is null)
+        if (CurrentDocument is null)
         {
             return;
         }
 
-        var text = _currentDocument.ToXamlString();
+        var text = CurrentDocument.ToXamlString();
         SetXamlSourceText(text);
 
         var (root, status) = RenderPreview(text);
@@ -777,7 +755,7 @@ public sealed partial class MainWindow : Window
         };
 
         _liveToDesign = root is not null
-            ? LiveTreeCorrelator.Correlate(root, _currentDocument.Root)
+            ? LiveTreeCorrelator.Correlate(root, CurrentDocument.Root)
             : new Dictionary<UIElement, DesignElement>();
         ClearSelection();
 
@@ -889,12 +867,12 @@ public sealed partial class MainWindow : Window
     /// <param name="localName">The XAML element name to add, e.g. "Button" (must be one of the types <see cref="ApplyDefaultAttributes"/> knows defaults for).</param>
     private void AddControl(string localName)
     {
-        if (_currentDocument is null)
+        if (CurrentDocument is null)
         {
             return;
         }
 
-        var canvasElement = _currentDocument.Root.Children.FirstOrDefault();
+        var canvasElement = CurrentDocument.Root.Children.FirstOrDefault();
         if (canvasElement is null || canvasElement.LocalName != "Canvas")
         {
             return;
@@ -967,7 +945,7 @@ public sealed partial class MainWindow : Window
     private string GenerateUniqueName(string localName)
     {
         var used = new HashSet<string>();
-        CollectNames(_currentDocument!.Root, used);
+        CollectNames(CurrentDocument!.Root, used);
 
         var n = 1;
         while (used.Contains($"{localName}{n}"))
@@ -1036,12 +1014,12 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private void SelectDocumentRoot()
     {
-        if (_currentDocument is null)
+        if (CurrentDocument is null)
         {
             return;
         }
 
-        var rootDesignElement = _currentDocument.Root.Children.FirstOrDefault();
+        var rootDesignElement = CurrentDocument.Root.Children.FirstOrDefault();
         if (rootDesignElement is null)
         {
             return;
@@ -1061,7 +1039,7 @@ public sealed partial class MainWindow : Window
     /// </summary>
     /// <param name="designElement">The element to test.</param>
     private bool IsDocumentRoot(DesignElement designElement) =>
-        _currentDocument?.Root.Children.FirstOrDefault() is { } root
+        CurrentDocument?.Root.Children.FirstOrDefault() is { } root
         && ReferenceEquals(root.Element, designElement.Element);
 
     /// <summary>Hit-tests the press point; if it lands on a design element, selects it and begins a move drag (unless it's the document root, which can't be moved), otherwise clears the selection.</summary>
@@ -1913,12 +1891,12 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private void SyncEventHandlerStubs()
     {
-        if (_currentFilePath is null || _currentDocument is null)
+        if (CurrentFilePath is null || CurrentDocument is null)
         {
             return;
         }
 
-        var className = _currentDocument.Root.GetAttribute(FabWinUIDesigner.Document.XamlNamespaces.X + "Class");
+        var className = CurrentDocument.Root.GetAttribute(FabWinUIDesigner.Document.XamlNamespaces.X + "Class");
         if (className is null)
         {
             return;
@@ -1955,7 +1933,7 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        var codeBehindPath = _currentFilePath + ".cs";
+        var codeBehindPath = CurrentFilePath + ".cs";
 
         try
         {
@@ -2069,7 +2047,7 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private void XamlSourceView_SelectionChanged()
     {
-        if (_suppressSourceSelectionSync || _currentDocument is null || _xamlPaneTab != XamlPaneTab.Source)
+        if (_suppressSourceSelectionSync || CurrentDocument is null || _xamlPaneTab != XamlPaneTab.Source)
         {
             return;
         }
@@ -2080,7 +2058,7 @@ public sealed partial class MainWindow : Window
             // applied edit not normalized yet (see ApplySourceEditAfterPause) - same elements in
             // the same order either way. Typed text that isn't applied yet may not be, so skip.
             var text = NormalizeLineEndings(XamlSourceView.Text);
-            if (_sourceEditPending && text != NormalizeLineEndings(_currentDocument.ToXamlString()))
+            if (_sourceEditPending && text != NormalizeLineEndings(CurrentDocument.ToXamlString()))
             {
                 return;
             }
@@ -2098,7 +2076,7 @@ public sealed partial class MainWindow : Window
                 return;
             }
 
-            var actualElement = _currentDocument.Root.Element.DescendantsAndSelf().ElementAtOrDefault(index);
+            var actualElement = CurrentDocument.Root.Element.DescendantsAndSelf().ElementAtOrDefault(index);
             if (actualElement is null || ReferenceEquals(actualElement, _selectedDesignElement?.Element))
             {
                 // Either nothing found, or the caret is still within the already-selected
@@ -2123,9 +2101,9 @@ public sealed partial class MainWindow : Window
     /// <summary>Re-renders just the XAML source pane from the current document, without touching the design surface.</summary>
     private void RefreshXamlSourceView()
     {
-        if (_currentDocument is not null)
+        if (CurrentDocument is not null)
         {
-            SetXamlSourceText(_currentDocument.ToXamlString());
+            SetXamlSourceText(CurrentDocument.ToXamlString());
         }
     }
 
@@ -2137,9 +2115,9 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private void XamlSourceView_LostFocus()
     {
-        if (TryApplyXamlSourceEdit() && _currentDocument is not null)
+        if (TryApplyXamlSourceEdit() && CurrentDocument is not null)
         {
-            var documentText = _currentDocument.ToXamlString();
+            var documentText = CurrentDocument.ToXamlString();
             if (NormalizeLineEndings(XamlSourceView.Text) != NormalizeLineEndings(documentText))
             {
                 SetXamlSourceText(documentText);
@@ -2154,13 +2132,13 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private void XamlSourceView_TextChanged()
     {
-        if (_suppressSourceSelectionSync || _currentDocument is null)
+        if (_suppressSourceSelectionSync || CurrentDocument is null)
         {
             return;
         }
 
         _sourceEditTimer.Stop();
-        _sourceEditPending = NormalizeLineEndings(XamlSourceView.Text) != NormalizeLineEndings(_currentDocument.ToXamlString());
+        _sourceEditPending = NormalizeLineEndings(XamlSourceView.Text) != NormalizeLineEndings(CurrentDocument.ToXamlString());
         if (_sourceEditPending)
         {
             _sourceEditTimer.Start();
@@ -2215,7 +2193,7 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private void FormatDocumentButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_currentDocument is null)
+        if (CurrentDocument is null)
         {
             return;
         }
@@ -2229,8 +2207,8 @@ public sealed partial class MainWindow : Window
 
         // LoadText, not the Text property - Text/SetText both record a step in TextControlBox's
         // own internal undo stack, which this app never surfaces or uses (Ctrl+Z drives the
-        // app-level document undo instead - see _undoStack); LoadText resets without touching it.
-        XamlSourceView.LoadText(_currentDocument.ToFormattedXamlString(), autodetectTabsSpaces: false);
+        // app-level document undo instead - see DocumentSession); LoadText resets without touching it.
+        XamlSourceView.LoadText(CurrentDocument.ToFormattedXamlString(), autodetectTabsSpaces: false);
         TryApplyXamlSourceEdit();
     }
 
@@ -2248,7 +2226,7 @@ public sealed partial class MainWindow : Window
     /// <returns>True if there was nothing to commit, or the commit succeeded; false if the typed text is invalid (an error is now showing).</returns>
     private bool TryApplyXamlSourceEdit()
     {
-        if (_currentDocument is null)
+        if (CurrentDocument is null)
         {
             return true;
         }
@@ -2263,7 +2241,7 @@ public sealed partial class MainWindow : Window
         // that as a real edit (which would otherwise commit a no-op change and force a full
         // design-surface reload just from focusing and then leaving the text box).
         var typedText = XamlSourceView.Text;
-        var currentText = _currentDocument.ToXamlString();
+        var currentText = CurrentDocument.ToXamlString();
         if (NormalizeLineEndings(typedText) == NormalizeLineEndings(currentText))
         {
             SetXamlSourceErrors([]);
@@ -2326,10 +2304,9 @@ public sealed partial class MainWindow : Window
             return false;
         }
 
-        BeginUndoableChange();
-        _currentDocument = parsed;
         _sourceEditPending = false;
-        CommitUndoableChange();
+        _session!.ReplaceDocument(parsed);
+        UpdateCommandStates();
         RefreshDesignSurfaceFromDocument();
         SetXamlSourceErrors([]);
         MarkSourceEditApplied();
@@ -2624,64 +2601,38 @@ public sealed partial class MainWindow : Window
             : new SolidColorBrush(Colors.Transparent);
     }
 
-    /// <summary>Call right before a mutation starts. Paired with <see cref="CommitUndoableChange"/>.</summary>
-    private void BeginUndoableChange()
-    {
-        if (_currentDocument is not null)
-        {
-            _pendingUndoSnapshot = _currentDocument.ToXamlString();
-        }
-    }
+    /// <summary>Call right before a mutation of the current document starts. Paired with <see cref="CommitUndoableChange"/> (see <see cref="DocumentSession.BeginChange"/>).</summary>
+    private void BeginUndoableChange() => _session?.BeginChange();
 
-    /// <summary>
-    /// Call right after a mutation succeeds - pushes the pre-mutation snapshot captured by
-    /// <see cref="BeginUndoableChange"/> onto the undo stack and clears redo (a fresh edit
-    /// invalidates whatever redo history existed). Does nothing if Begin wasn't called first,
-    /// so a validated-and-rejected edit (e.g. unparsable property input) never adds a no-op
-    /// undo step.
-    /// </summary>
+    /// <summary>Call right after a mutation succeeds: records it as one undo step (see <see cref="DocumentSession.CommitChange"/>).</summary>
     private void CommitUndoableChange()
     {
-        if (_pendingUndoSnapshot is null)
-        {
-            return;
-        }
-
-        _undoStack.Push(_pendingUndoSnapshot);
-        _redoStack.Clear();
-        _pendingUndoSnapshot = null;
-
         // Most commits are followed by a source-view refresh that updates the toolbar anyway,
         // but not all of them - doing it here too keeps Undo/Redo from ever lagging behind.
-        UpdateCommandStates();
+        if (_session?.CommitChange() == true)
+        {
+            UpdateCommandStates();
+        }
     }
 
-    /// <summary>Restores the document to the top of the undo stack, pushing the current state onto redo first.</summary>
+    /// <summary>Undoes the last change to the current document and re-renders it.</summary>
     private void Undo()
     {
-        if (_undoStack.Count == 0 || _currentDocument is null)
+        if (_session?.Undo() == true)
         {
-            return;
+            RefreshDesignSurfaceFromDocument();
+            UpdateCommandStates();
         }
-
-        _redoStack.Push(_currentDocument.ToXamlString());
-        _currentDocument = XamlDocument.Parse(_undoStack.Pop());
-        RefreshDesignSurfaceFromDocument();
-        UpdateCommandStates();
     }
 
-    /// <summary>Restores the document to the top of the redo stack, pushing the current state onto undo first.</summary>
+    /// <summary>Redoes the last undone change to the current document and re-renders it.</summary>
     private void Redo()
     {
-        if (_redoStack.Count == 0 || _currentDocument is null)
+        if (_session?.Redo() == true)
         {
-            return;
+            RefreshDesignSurfaceFromDocument();
+            UpdateCommandStates();
         }
-
-        _undoStack.Push(_currentDocument.ToXamlString());
-        _currentDocument = XamlDocument.Parse(_redoStack.Pop());
-        RefreshDesignSurfaceFromDocument();
-        UpdateCommandStates();
     }
 
     /// <summary>
@@ -2731,12 +2682,12 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private void UpdateCommandStates()
     {
-        var hasDocument = _currentDocument is not null;
+        var hasDocument = CurrentDocument is not null;
         // Text typed in the XAML source but not applied yet counts as unsaved too.
-        SaveButton.IsEnabled = SaveMenuItem.IsEnabled = hasDocument && (_sourceEditPending || _currentDocument!.ToXamlString() != _lastSavedXaml);
+        SaveButton.IsEnabled = SaveMenuItem.IsEnabled = hasDocument && (_sourceEditPending || _session!.IsModified);
         SaveAsMenuItem.IsEnabled = hasDocument;
-        UndoButton.IsEnabled = UndoMenuItem.IsEnabled = hasDocument && _undoStack.Count > 0;
-        RedoButton.IsEnabled = RedoMenuItem.IsEnabled = hasDocument && _redoStack.Count > 0;
+        UndoButton.IsEnabled = UndoMenuItem.IsEnabled = _session?.CanUndo == true;
+        RedoButton.IsEnabled = RedoMenuItem.IsEnabled = _session?.CanRedo == true;
         FormatToolbarButton.IsEnabled = FormatMenuItem.IsEnabled = hasDocument;
         UpdateSelectionCommandStates();
         UpdateDocumentStatus();
@@ -2753,16 +2704,16 @@ public sealed partial class MainWindow : Window
     private void UpdateDocumentStatus()
     {
         UpdateCaretStatus();
-        if (_currentDocument is null)
+        if (CurrentDocument is null)
         {
             Title = AppTitle;
             StatusFilePathText.Text = string.Empty;
             return;
         }
 
-        var name = _currentFilePath is null ? "Untitled" : Path.GetFileName(_currentFilePath);
+        var name = CurrentFilePath is null ? "Untitled" : Path.GetFileName(CurrentFilePath);
         Title = $"{name}{(SaveButton.IsEnabled ? "*" : string.Empty)} - {AppTitle}";
-        StatusFilePathText.Text = _currentFilePath ?? "(not saved yet)";
+        StatusFilePathText.Text = CurrentFilePath ?? "(not saved yet)";
     }
 
     /// <summary>Shows <paramref name="message"/> on the left of the status bar, e.g. "Saved Page1.xaml".</summary>
@@ -2773,7 +2724,7 @@ public sealed partial class MainWindow : Window
     private void UpdateCaretStatus()
     {
         var caret = XamlSourceView.CursorPosition;
-        StatusCaretText.Text = _currentDocument is null
+        StatusCaretText.Text = CurrentDocument is null
             ? string.Empty
             : $"Ln {caret.LineNumber + 1}, Col {caret.CharacterPosition + 1}";
     }
