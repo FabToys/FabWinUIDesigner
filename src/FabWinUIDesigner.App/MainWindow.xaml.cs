@@ -123,7 +123,7 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        Title = "FabWinUI Designer";
+        Title = AppTitle;
 
         BuildToolbox();
 
@@ -211,7 +211,11 @@ public sealed partial class MainWindow : Window
         // don't match TextBox's shapes (LostFocus/GotFocus pass only a sender, no EventArgs;
         // SelectionChanged's second parameter is a type specific to this control) - implicit-
         // typed lambdas bind against whatever the real delegate is without needing to name it.
-        XamlSourceView.SelectionChanged += (_, _) => XamlSourceView_SelectionChanged();
+        XamlSourceView.SelectionChanged += (_, _) =>
+        {
+            UpdateCaretStatus();
+            XamlSourceView_SelectionChanged();
+        };
         XamlSourceView.TextChanged += _ => XamlSourceView_TextChanged();
         _sourceEditTimer = DispatcherQueue.CreateTimer();
         _sourceEditTimer.Interval = SourceEditApplyDelay;
@@ -297,7 +301,6 @@ public sealed partial class MainWindow : Window
         var doc = XamlDocument.Parse(NewDocumentTemplate);
         _currentDocument = doc;
         _currentFilePath = null;
-        CurrentFileText.Text = "(no file open)";
 
         _undoStack.Clear();
         _redoStack.Clear();
@@ -307,6 +310,7 @@ public sealed partial class MainWindow : Window
         RefreshDesignSurfaceFromDocument();
         SelectDocumentRootAfterLayout();
         UpdateCommandStates();
+        SetStatus("New file");
     }
 
     private async void OpenButton_Click(object sender, RoutedEventArgs e) => await OpenFileAsync();
@@ -368,12 +372,12 @@ public sealed partial class MainWindow : Window
             }
 
             _currentFilePath = file.Path;
-            CurrentFileText.Text = _currentFilePath;
         }
 
         _currentDocument.Save(_currentFilePath);
         _lastSavedXaml = _currentDocument.ToXamlString();
         UpdateCommandStates();
+        SetStatus($"Saved {Path.GetFileName(_currentFilePath)}");
         AddRecentFile(_currentFilePath);
         SyncEventHandlerStubs();
     }
@@ -518,22 +522,14 @@ public sealed partial class MainWindow : Window
     /// <summary>Filters the Explorer as the user types.</summary>
     private void ExplorerSearchBox_TextChanged(object sender, TextChangedEventArgs e) => RebuildFileTree();
 
-    /// <summary>
-    /// Single click just selects and shows the full path; double-click (below) loads it.
+    /// <summary>Loads the double-tapped file tree node, if it's a `.xaml` node (double-tapping the folder or a nested `.xaml.cs` node does nothing - see <see cref="FileTreeNodeInfo"/>).</summary>
+    /// <remarks>
     /// Uses SelectedNode.Content, not SelectedItem - SelectedItem only reflects the selection
     /// for an ItemsSource-bound TreeView; ours is populated manually via RootNodes/TreeViewNode,
     /// so SelectedNode is the API that actually tracks selection in that mode. (Bug found via
-    /// real testing: double-click silently did nothing because of this.)
-    /// </summary>
-    private void FileTreeView_SelectionChanged(TreeView sender, TreeViewSelectionChangedEventArgs args)
-    {
-        if (FileTreeView.SelectedNode?.Content is FileTreeNodeInfo info)
-        {
-            CurrentFileText.Text = info.FullPath;
-        }
-    }
-
-    /// <summary>Loads the double-tapped file tree node, if it's a `.xaml` node (double-tapping the folder or a nested `.xaml.cs` node does nothing - see <see cref="FileTreeNodeInfo"/>).</summary>
+    /// real testing: double-click silently did nothing because of this.) Single click only
+    /// selects; each item's full path is in its tooltip.
+    /// </remarks>
     private void FileTreeView_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
     {
         if (FileTreeView.SelectedNode?.Content is FileTreeNodeInfo { Kind: FileTreeNodeKind.Xaml } info)
@@ -729,7 +725,7 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    /// <summary>Loads a `.xaml` file as the current document, resets undo/redo and dirty-tracking, refreshes the design surface, and adds it to Recent Files. On failure, shows the error in place of the current-file path instead of throwing.</summary>
+    /// <summary>Loads a `.xaml` file as the current document, resets undo/redo and dirty-tracking, refreshes the design surface, and adds it to Recent Files. On failure, shows the error in the status bar instead of throwing.</summary>
     /// <param name="path">Absolute path of the `.xaml` file to load.</param>
     private void LoadFile(string path)
     {
@@ -738,7 +734,6 @@ public sealed partial class MainWindow : Window
             var doc = XamlDocument.Load(path);
             _currentDocument = doc;
             _currentFilePath = path;
-            CurrentFileText.Text = path;
 
             // A freshly-loaded file has no undo history and nothing unsaved yet.
             _undoStack.Clear();
@@ -749,10 +744,11 @@ public sealed partial class MainWindow : Window
             RefreshDesignSurfaceFromDocument();
             SelectDocumentRootAfterLayout();
             AddRecentFile(path);
+            SetStatus($"Opened {Path.GetFileName(path)}");
         }
         catch (Exception ex)
         {
-            CurrentFileText.Text = $"Failed to open: {ex.Message}";
+            SetStatus($"Failed to open {Path.GetFileName(path)}: {ex.Message}");
         }
     }
 
@@ -2743,6 +2739,43 @@ public sealed partial class MainWindow : Window
         RedoButton.IsEnabled = RedoMenuItem.IsEnabled = hasDocument && _redoStack.Count > 0;
         FormatToolbarButton.IsEnabled = FormatMenuItem.IsEnabled = hasDocument;
         UpdateSelectionCommandStates();
+        UpdateDocumentStatus();
+    }
+
+    private const string AppTitle = "FabWinUI Designer";
+
+    /// <summary>
+    /// Window title and status-bar path for the current document, VS-style:
+    /// <c>Page1.xaml* - FabWinUI Designer</c>, the <c>*</c> marking unsaved changes (same test as
+    /// the Save button). Called from <see cref="UpdateCommandStates"/>, which already runs on
+    /// every change to the document, its path, or its saved state.
+    /// </summary>
+    private void UpdateDocumentStatus()
+    {
+        UpdateCaretStatus();
+        if (_currentDocument is null)
+        {
+            Title = AppTitle;
+            StatusFilePathText.Text = string.Empty;
+            return;
+        }
+
+        var name = _currentFilePath is null ? "Untitled" : Path.GetFileName(_currentFilePath);
+        Title = $"{name}{(SaveButton.IsEnabled ? "*" : string.Empty)} - {AppTitle}";
+        StatusFilePathText.Text = _currentFilePath ?? "(not saved yet)";
+    }
+
+    /// <summary>Shows <paramref name="message"/> on the left of the status bar, e.g. "Saved Page1.xaml".</summary>
+    /// <param name="message">Short message for the last completed action.</param>
+    private void SetStatus(string message) => StatusMessageText.Text = message;
+
+    /// <summary>Shows the XAML editor's caret position (1-based, like VS: "Ln 12, Col 5") in the status bar, or nothing while no document is open.</summary>
+    private void UpdateCaretStatus()
+    {
+        var caret = XamlSourceView.CursorPosition;
+        StatusCaretText.Text = _currentDocument is null
+            ? string.Empty
+            : $"Ln {caret.LineNumber + 1}, Col {caret.CharacterPosition + 1}";
     }
 
     /// <summary>Enables Edit → Delete / Deselect only while something is selected. Split out from <see cref="UpdateCommandStates"/> because it runs on every selection change, where re-serializing the document for the Save check would be wasted work.</summary>

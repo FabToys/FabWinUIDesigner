@@ -10,6 +10,7 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
         <Grid.ColumnDefinitions>
             <ColumnDefinition x:Name="ToolboxColumn" Width="160" />
@@ -370,7 +371,6 @@
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
-                    <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
 
                 <Grid Grid.Row="0" Margin="0,0,0,6">
@@ -404,11 +404,10 @@
                     x:Name="FileTreeView"
                     Grid.Row="2"
                     SelectionMode="Single"
-                    SelectionChanged="FileTreeView_SelectionChanged"
                     DoubleTapped="FileTreeView_DoubleTapped">
                     <TreeView.ItemTemplate>
                         <DataTemplate>
-                            <StackPanel Orientation="Horizontal" Spacing="6">
+                            <StackPanel Orientation="Horizontal" Spacing="6" ToolTipService.ToolTip="{Binding Content.FullPath}">
                                 <FontIcon Glyph="{Binding Content.Glyph}" Foreground="{Binding Content.IconBrush}" FontSize="14" />
                                 <TextBlock Text="{Binding Content.DisplayName}" VerticalAlignment="Center" />
                             </StackPanel>
@@ -416,7 +415,6 @@
                     </TreeView.ItemTemplate>
                 </TreeView>
 
-                <TextBlock x:Name="CurrentFileText" Grid.Row="3" Text="(no file open)" TextWrapping="Wrap" FontSize="11" Foreground="Gray" Margin="0,6,0,0" />
             </Grid>
 
             <!-- Draggable splitter: File panel <-> Properties -->
@@ -477,5 +475,21 @@
                 </ScrollViewer>
             </Grid>
         </Grid>
+
+        <!-- Status bar, VS-style: status message on the left, then the current file's full path and
+             the XAML editor's caret position (filled in code: SetStatus, UpdateDocumentStatus,
+             UpdateCaretStatus). -->
+        <Border Grid.Row="3" Grid.ColumnSpan="4" Background="#FF007ACC" Padding="8,2">
+            <Grid ColumnSpacing="24">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="StatusMessageText" Text="Ready" Foreground="White" FontSize="12" />
+                <TextBlock x:Name="StatusFilePathText" Grid.Column="1" Foreground="White" FontSize="12" HorizontalAlignment="Right" TextTrimming="CharacterEllipsis" />
+                <TextBlock x:Name="StatusCaretText" Grid.Column="2" Foreground="White" FontSize="12" MinWidth="110" />
+            </Grid>
+        </Border>
     </Grid>
 </Window>
