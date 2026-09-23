@@ -21,22 +21,28 @@ app to place controls, edit their properties, and generate/round-trip real, hand
   format.
 - Click-to-add toolbox, drag-to-move, 8-handle resize, and a reflection-driven property grid,
   all backed by an in-app undo/redo stack.
-- A two-way-synced, syntax-highlighted XAML source view sits alongside the design surface:
-  edit either one and the other follows, with inline error reporting for invalid XAML and a
-  one-click reformat.
+- A syntax-highlighted XAML source view sits alongside the design surface: edit either one and
+  the other follows (typed XAML is applied after a short pause), with inline error reporting for
+  invalid XAML and a one-click reformat.
+- Event wiring: name a handler in the Events tab and a matching stub is generated into the
+  page's `.xaml.cs` code-behind on save (Roslyn-based).
+- A Visual Studio-style shell: main menu and toolbar, an Explorer panel for the opened folder, and
+  a status bar.
 
 ## What's supported
 
 | Area | Support |
 |---|---|
 | Controls | `Button`, `TextBlock`, `TextBox`, `CheckBox`, `ComboBox`, `Image`, `StackPanel`, `Grid` |
-| Layout | Canvas-based absolute positioning (`Canvas.Left`/`Top`, `Width`/`Height`) for v1 |
+| Layout | Canvas-based absolute positioning (`Canvas.Left`/`Top`, `Width`/`Height`) for v1, optional snap-to-grid. The root element stays in place (resizable from its right/bottom edges only) |
 | Selection | Single-select, move, 8-handle resize |
-| Properties | Reflection-driven property grid (curated per-type list, no design-time metadata exists on WinUI controls to discover this automatically) |
-| XAML source | Editable, syntax-highlighted, two-way caret sync with the design surface, inline error reporting, Format Document |
-| File I/O | Open/New/Save, folder-based file browser, Recent Files/Folders |
+| Properties | Property grid with a Properties and an Events tab, grouped by category or alphabetical. Per-control property/event lists come from JSON metadata files next to the app, since WinUI controls carry no design-time metadata to discover them automatically |
+| XAML source | Editable, syntax-highlighted, applied after a typing pause; the caret selects the element it's in on the design surface; inline error reporting; Format Document |
+| Code-behind | Event-handler stubs generated into the paired `.xaml.cs` on save |
+| File I/O | New/Open/Save/Save As, Recent Files/Folders, Explorer panel (search, refresh, file-type icons, `.xaml.cs` nested under its `.xaml`). Asks to reload when the open file is changed by another program |
+| Shell | Main menu (File/Edit/View/Help) with Ctrl+N/O/Shift+O/S/Z/Y shortcuts, toolbar, status bar (last action, file path, caret line/column), unsaved `*` in the window title |
 | Undo/Redo | Whole-document snapshots |
-| Not yet | Multi-select, data binding UI, event-handler code generation (planned next — see below) |
+| Not yet | Several files open in tabs (planned next — see below), multi-select, data binding UI, more controls |
 
 ## Requirements
 
@@ -79,8 +85,10 @@ palette.
 
 ## What's next
 
-Event-handler code generation: wiring a XAML event (e.g. a `Button.Click`) to a Roslyn-generated
-stub inserted into the paired `.xaml.cs` partial class.
+- Several XAML files open at the same time, one per tab.
+- A Toolbox ready for many more controls (groups, search, alphabetical view), then a much wider
+  control set.
+- Multi-select, alignment guides, and a Grid row/column editor.
 
 ## License
 
