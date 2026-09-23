@@ -25,6 +25,7 @@ using FabWinUIDesigner.CodeGen;
 using FabWinUIDesigner.Core;
 using DesignElement = FabWinUIDesigner.Document.DesignElement;
 using XamlDocument = FabWinUIDesigner.Document.XamlDocument;
+using XamlSourcePositions = FabWinUIDesigner.Document.XamlSourcePositions;
 
 namespace FabWinUIDesigner.App;
 
@@ -1969,10 +1970,9 @@ public sealed partial class MainWindow : Window
             // converted to a flat offset via the same OffsetOf helper the Errors grid's
             // line/column positions already use (it takes 1-based line/column, hence the +1s).
             var caret = XamlSourceView.CursorPosition;
-            var caretOffset = OffsetOf(text, caret.LineNumber + 1, caret.CharacterPosition + 1);
+            var caretOffset = XamlSourcePositions.OffsetOf(text, caret.LineNumber + 1, caret.CharacterPosition + 1);
 
-            var reparsed = XDocument.Parse(text, LoadOptions.SetLineInfo);
-            var index = EnclosingElementIndex(reparsed, text, caretOffset);
+            var index = XamlSourcePositions.EnclosingElementIndex(text, caretOffset);
             if (index < 0)
             {
                 return;
@@ -1998,64 +1998,6 @@ public sealed partial class MainWindow : Window
             // Best-effort - a hiccup here must never disrupt normal typing/editing.
             WriteLog($"XamlSourceView_SelectionChanged failed: {ex}");
         }
-    }
-
-    /// <summary>Finds the document-order index of whichever element's start tag is closest at-or-before <paramref name="caretOffset"/> - i.e. the innermost element the caret is currently on/in, approximating by "most recently opened tag" since none of the MVP's controls have separate closing tags to bound the other end.</summary>
-    /// <param name="reparsed">A line-info-annotated reparse of <paramref name="text"/>.</param>
-    /// <param name="text">The text <paramref name="reparsed"/> was parsed from.</param>
-    /// <param name="caretOffset">0-based character offset of the caret.</param>
-    /// <returns>The zero-based document-order index of the enclosing element, or -1 if none starts at or before the caret.</returns>
-    private static int EnclosingElementIndex(XDocument reparsed, string text, int caretOffset)
-    {
-        if (reparsed.Root is null)
-        {
-            return -1;
-        }
-
-        var bestIndex = -1;
-        var bestOffset = -1;
-        var index = 0;
-
-        foreach (var element in reparsed.Root.DescendantsAndSelf())
-        {
-            if (element is IXmlLineInfo lineInfo && lineInfo.HasLineInfo())
-            {
-                var elementOffset = OffsetOf(text, lineInfo.LineNumber, lineInfo.LinePosition);
-                if (elementOffset <= caretOffset && elementOffset > bestOffset)
-                {
-                    bestOffset = elementOffset;
-                    bestIndex = index;
-                }
-            }
-
-            index++;
-        }
-
-        return bestIndex;
-    }
-
-    /// <summary>Converts a 1-based (line, column) position, as reported by <see cref="IXmlLineInfo"/>, to a 0-based character offset into <paramref name="text"/>.</summary>
-    /// <param name="text">The text the position is within.</param>
-    /// <param name="line">1-based line number.</param>
-    /// <param name="column">1-based column number.</param>
-    /// <returns>The matching 0-based character offset, clamped to <paramref name="text"/>'s length.</returns>
-    private static int OffsetOf(string text, int line, int column)
-    {
-        var offset = 0;
-        var currentLine = 1;
-        while (currentLine < line)
-        {
-            var newlineIndex = text.IndexOf('\n', offset);
-            if (newlineIndex < 0)
-            {
-                return text.Length;
-            }
-
-            offset = newlineIndex + 1;
-            currentLine++;
-        }
-
-        return Math.Min(text.Length, offset + column - 1);
     }
 
     /// <summary>Re-renders just the XAML source pane from the current document, without touching the design surface.</summary>
@@ -2143,7 +2085,7 @@ public sealed partial class MainWindow : Window
                     xmlEx.LineNumber.ToString(CultureInfo.InvariantCulture),
                     xmlEx.LinePosition.ToString(CultureInfo.InvariantCulture),
                     CleanErrorMessage(ex.Message),
-                    OffsetOf(typedText, xmlEx.LineNumber, xmlEx.LinePosition))
+                    XamlSourcePositions.OffsetOf(typedText, xmlEx.LineNumber, xmlEx.LinePosition))
                 : new XamlErrorListItem(string.Empty, string.Empty, CleanErrorMessage(ex.Message), null);
             SetXamlSourceErrors([item]);
             return false;
@@ -2166,7 +2108,7 @@ public sealed partial class MainWindow : Window
             if (errors.Count == 0)
             {
                 var line = TryExtractLine(status);
-                var offset = line is int l ? OffsetOf(parsedText, l, 1) : (int?)null;
+                var offset = line is int l ? XamlSourcePositions.OffsetOf(parsedText, l, 1) : (int?)null;
                 errors.Add(new XamlErrorListItem(line?.ToString(CultureInfo.InvariantCulture) ?? string.Empty, string.Empty, CleanErrorMessage(status), offset));
             }
 
@@ -2262,7 +2204,7 @@ public sealed partial class MainWindow : Window
 
                 var lineInfo = element as IXmlLineInfo;
                 var hasLineInfo = lineInfo?.HasLineInfo() == true;
-                var offset = hasLineInfo ? OffsetOf(text, lineInfo!.LineNumber, lineInfo.LinePosition) : (int?)null;
+                var offset = hasLineInfo ? XamlSourcePositions.OffsetOf(text, lineInfo!.LineNumber, lineInfo.LinePosition) : (int?)null;
                 var lineText = hasLineInfo ? lineInfo!.LineNumber.ToString(CultureInfo.InvariantCulture) : string.Empty;
                 var columnText = hasLineInfo ? lineInfo!.LinePosition.ToString(CultureInfo.InvariantCulture) : string.Empty;
                 errors.Add(new XamlErrorListItem(lineText, columnText, CleanErrorMessage($"'{name}' is not a property or event on <{element.Name.LocalName}>."), offset));
