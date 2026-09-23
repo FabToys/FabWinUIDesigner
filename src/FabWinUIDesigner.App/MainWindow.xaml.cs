@@ -897,7 +897,17 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    /// <summary>Hit-tests the press point; if it lands on a design element, selects it and begins a move drag, otherwise clears the selection.</summary>
+    /// <summary>
+    /// Whether <paramref name="designElement"/> is the document's root design element (the first
+    /// child of the XAML root, typically the root Canvas) - the same element
+    /// <see cref="SelectDocumentRoot"/> selects.
+    /// </summary>
+    /// <param name="designElement">The element to test.</param>
+    private bool IsDocumentRoot(DesignElement designElement) =>
+        _currentDocument?.Root.Children.FirstOrDefault() is { } root
+        && ReferenceEquals(root.Element, designElement.Element);
+
+    /// <summary>Hit-tests the press point; if it lands on a design element, selects it and begins a move drag (unless it's the document root, which can't be moved), otherwise clears the selection.</summary>
     private void DesignSurfaceHost_PointerPressed(object sender, PointerRoutedEventArgs e)
     {
         // FindElementsInHostCoordinates wants the point in the window root's coordinate
@@ -920,6 +930,14 @@ public sealed partial class MainWindow : Window
             if (hit is UIElement hitElement && _liveToDesign.TryGetValue(hitElement, out var designElement))
             {
                 Select(hitElement, designElement);
+
+                // The root has no parent Canvas to be positioned in - dragging it would only
+                // write a meaningless Canvas.Left/Top onto it - so a click just selects it.
+                if (IsDocumentRoot(designElement))
+                {
+                    e.Handled = true;
+                    return;
+                }
 
                 BeginUndoableChange();
                 _moveElement = hitElement;
@@ -1160,6 +1178,17 @@ public sealed partial class MainWindow : Window
         SelectionRectangle.Visibility = Visibility.Visible;
         SelectionLabel.Visibility = Visibility.Visible;
         SetHandlesVisibility(Visibility.Visible);
+
+        if (IsDocumentRoot(designElement))
+        {
+            // Only the handles that change size alone: the others also shift Canvas.Left/Top,
+            // which would move the root (see DesignSurfaceHost_PointerPressed).
+            HandleNW.Visibility = Visibility.Collapsed;
+            HandleN.Visibility = Visibility.Collapsed;
+            HandleNE.Visibility = Visibility.Collapsed;
+            HandleW.Visibility = Visibility.Collapsed;
+            HandleSW.Visibility = Visibility.Collapsed;
+        }
 
         var label = designElement.Name is { Length: > 0 } name
             ? $"{designElement.LocalName} ({name})"
