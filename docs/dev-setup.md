@@ -65,6 +65,8 @@ explicit build + launch above is what was verified during M0.)
 Picked as the latest stable (non-preview) NuGet versions as of 2026-09-16:
 - `Microsoft.WindowsAppSDK` 2.3.1
 - `Microsoft.Windows.SDK.BuildTools` 10.0.28000.2705
-- `Microsoft.CodeAnalysis.CSharp` 5.9.0
+- `Microsoft.CodeAnalysis.CSharp` / `Microsoft.CodeAnalysis.CSharp.Workspaces` 5.9.0
+- `TextControlBox.WinUI.JuliusKirsch` 1.6.2 (the XAML source editor, MIT; the reason for .NET 10,
+  since it ships no `net8.0` build)
 - `Microsoft.NET.Test.Sdk` 18.10.1
 - `MSTest.TestAdapter` / `MSTest.TestFramework` 4.4.0

@@ -38,9 +38,9 @@ app to place controls, edit their properties, and generate/round-trip real, hand
 |---|---|
 | Controls | `Button`, `TextBlock`, `TextBox`, `CheckBox`, `ComboBox`, `Image`, `StackPanel`, `Grid` |
 | Layout | Canvas-based absolute positioning (`Canvas.Left`/`Top`, `Width`/`Height`) for v1, optional snap-to-grid. The root element stays in place (resizable from its right/bottom edges only) |
-| Selection | Single-select, move, 8-handle resize |
+| Selection | Single-select, move, 8-handle resize. Every element can be clicked on the design surface, including disabled controls and panels without a background |
 | Toolbox | Click-to-add, grouped by category (collapsible groups, Common open by default) or one alphabetical list, with search. Groups and each control's starting attributes (content, size) come from the metadata JSON |
-| Properties | Property grid with a Properties and an Events tab, grouped by category or alphabetical. Per-control property/event lists come from JSON metadata files next to the app, since WinUI controls carry no design-time metadata to discover them automatically. You can point the designer at metadata files of your own (Tools → Options) |
+| Properties | Property grid with a Properties and an Events tab, grouped by category or alphabetical. Properties not set in the XAML show the value in effect (defaults greyed in text fields). Property/event lists come from JSON metadata files next to the app, since WinUI controls carry no design-time metadata to discover them automatically. They're listed per class, base classes included (`FrameworkElement`, `Control`, ...), and each control inherits the lists along its real WinUI class chain. You can point the designer at metadata files of your own (Tools → Options) |
 | XAML source | Editable, syntax-highlighted, applied after a typing pause; the caret selects the element it's in on the design surface; inline error reporting; Format Document |
 | Code-behind | Event-handler stubs generated into the paired `.xaml.cs` on save |
 | Tabs | One tab per open file, each with its own undo history. Unsaved `*` on the tab. Opening a file that's already open switches to its tab. Switching back restores the caret, scroll positions, selection and XAML typed but not applied yet. Close with the tab's X or Ctrl+W; Save / Don't Save / Cancel for unsaved changes, on closing a tab and on exit. Tabs are reopened on start (can be turned off) |
@@ -104,8 +104,8 @@ palette.
 
 ## What's next
 
-- A much wider control set (around 80 controls from the WinUI Gallery), starting with metadata
-  shared through base classes so common properties are listed once.
+- Logging (Serilog), with its options in Tools → Options.
+- A much wider control set (around 80 controls from the WinUI Gallery).
 - More property editors (corner radius, fonts, images, icons, dates...) and attached properties
   (`Grid.Row`, `AutomationProperties.Name`, ...).
 - Multi-select, alignment guides, and a Grid row/column editor.
