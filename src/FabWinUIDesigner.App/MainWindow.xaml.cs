@@ -3213,27 +3213,6 @@ public sealed partial class MainWindow : Window
         UpdateCommandStates();
     }
 
-    /// <summary>
-    /// The MVP control types this designer supports, for validating that a plain attribute in
-    /// the XAML source names a real property or event on that control - see
-    /// <see cref="FindUnknownPropertyErrors"/>. Deliberately the same set the toolbox offers
-    /// (<see cref="AddControl"/>), not every WinUI control that could theoretically appear in
-    /// hand-edited XAML.
-    /// </summary>
-    private static readonly IReadOnlyDictionary<string, Type> KnownControlTypes = new Dictionary<string, Type>
-    {
-        ["Page"] = typeof(Page),
-        ["Canvas"] = typeof(Canvas),
-        ["Grid"] = typeof(Grid),
-        ["StackPanel"] = typeof(StackPanel),
-        ["Button"] = typeof(Button),
-        ["TextBlock"] = typeof(TextBlock),
-        ["TextBox"] = typeof(TextBox),
-        ["CheckBox"] = typeof(CheckBox),
-        ["ComboBox"] = typeof(ComboBox),
-        ["Image"] = typeof(Image),
-    };
-
     /// <summary>True for an attribute that represents a plain CLR property/event in XAML's default namespace - excludes namespace declarations (xmlns:...), namespaced attributes (x:Name, mc:Ignorable, ...), and attached properties (e.g. "Canvas.Left", which have a '.' in the local name and aren't resolved via GetProperty/GetEvent on the element's own type).</summary>
     /// <param name="attribute">Attribute to check.</param>
     private static bool IsPlainAttribute(XAttribute attribute) =>
@@ -3243,7 +3222,7 @@ public sealed partial class MainWindow : Window
 
     /// <summary>
     /// Finds every unknown-property/event attribute in the document by reflecting directly
-    /// against each element's real CLR type (<see cref="KnownControlTypes"/>) - unlike
+    /// against each element's real CLR type (<see cref="ControlTypeResolver.Resolve"/>) - unlike
     /// XamlReader.Load, which stops at the first such problem it hits, this checks every element
     /// in one pass, so several mistakes (e.g. more than one typo'd property name) can all be
     /// reported - and jumped to - at once. Only covers this one error shape; other kinds of
@@ -3273,7 +3252,11 @@ public sealed partial class MainWindow : Window
 
         foreach (var element in reparsed.Root.DescendantsAndSelf())
         {
-            if (!KnownControlTypes.TryGetValue(element.Name.LocalName, out var type))
+            // Only unprefixed (WinUI) elements: a custom local:Button isn't WinUI's Button.
+            // Elements that aren't a WinUI UIElement (RowDefinition, property elements such as
+            // Grid.RowDefinitions, custom controls) aren't checked.
+            if (element.Name.Namespace != FabWinUIDesigner.Document.XamlNamespaces.Presentation
+                || ControlTypeResolver.Resolve(element.Name.LocalName) is not { } type)
             {
                 continue;
             }

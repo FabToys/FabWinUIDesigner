@@ -50,7 +50,7 @@ public static class EventGridSchema
 
     /// <summary>Gets the event list to show in the property grid's Events section for one control type.</summary>
     /// <param name="controlTypeName">The element's XAML type name, e.g. "Button".</param>
-    /// <returns>The type's curated events, or an empty list for a type with none (e.g. <c>TextBlock</c>).</returns>
+    /// <returns>The events listed for the type and its base classes (e.g. a CheckBox gets ButtonBase's Click and ToggleButton's Checked/Unchecked), base class first; empty for a type with none (e.g. <c>TextBlock</c>).</returns>
     public static IReadOnlyList<EventDescriptor> GetEvents(string controlTypeName) =>
-        ByControlType.TryGetValue(controlTypeName, out var list) ? list : [];
+        ControlTypeResolver.MergeEntries(ByControlType, controlTypeName, d => d.Name) ?? [];
 }

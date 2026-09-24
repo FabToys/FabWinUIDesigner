@@ -1,10 +1,10 @@
 {
   "ToolboxGroups": [
-    { "Name": "Common", "ExpandedByDefault": true, "Controls": [ "Button", "TextBlock", "TextBox", "CheckBox", "ComboBox", "Image", "StackPanel", "Grid" ] },
-    { "Name": "Basic input", "Controls": [ "Button", "CheckBox", "ComboBox" ] },
-    { "Name": "Text", "Controls": [ "TextBlock", "TextBox" ] },
-    { "Name": "Layout", "Controls": [ "Grid", "StackPanel" ] },
-    { "Name": "Media", "Controls": [ "Image" ] }
+    {"Name": "Common", "ExpandedByDefault": true, "Controls": [ "Button", "TextBlock", "TextBox", "CheckBox", "ComboBox", "Image", "StackPanel", "Grid" ]},
+    {"Name": "Basic input", "Controls": [ "Button", "CheckBox", "ComboBox" ]},
+    {"Name": "Text", "Controls": [ "TextBlock", "TextBox" ]},
+    {"Name": "Layout", "Controls": [ "Grid", "StackPanel" ]},
+    {"Name": "Media", "Controls": [ "Image" ]}
   ],
   "DefaultAttributes": {
     "_default": { "Width": "100", "Height": "32" },
@@ -26,102 +26,35 @@
       { "Name": "VerticalAlignment", "Category": "Layout" },
       { "Name": "Visibility", "Category": "Appearance" }
     ],
-    "Button": [
-      { "Name": "Content", "Category": "Text" },
+    "UIElement": [
+      { "Name": "Visibility", "Category": "Appearance" }
+    ],
+    "FrameworkElement": [
       { "Name": "Width", "Category": "Layout" },
       { "Name": "Height", "Category": "Layout" },
       { "Name": "Margin", "Category": "Layout" },
       { "Name": "HorizontalAlignment", "Category": "Layout" },
-      { "Name": "VerticalAlignment", "Category": "Layout" },
-      { "Name": "Visibility", "Category": "Appearance" },
+      { "Name": "VerticalAlignment", "Category": "Layout" }
+    ],
+    "Control": [
       { "Name": "Foreground", "Category": "Appearance" },
       { "Name": "Background", "Category": "Appearance" },
       { "Name": "FontSize", "Category": "Appearance" },
       { "Name": "IsEnabled", "Category": "Common Properties" }
     ],
-    "CheckBox": [
-      { "Name": "Content", "Category": "Text" },
-      { "Name": "Width", "Category": "Layout" },
-      { "Name": "Height", "Category": "Layout" },
-      { "Name": "Margin", "Category": "Layout" },
-      { "Name": "HorizontalAlignment", "Category": "Layout" },
-      { "Name": "VerticalAlignment", "Category": "Layout" },
-      { "Name": "Visibility", "Category": "Appearance" },
-      { "Name": "Foreground", "Category": "Appearance" },
-      { "Name": "Background", "Category": "Appearance" },
-      { "Name": "FontSize", "Category": "Appearance" },
-      { "Name": "IsEnabled", "Category": "Common Properties" }
+    "ContentControl": [
+      { "Name": "Content", "Category": "Text" }
+    ],
+    "Panel": [
+      { "Name": "Background", "Category": "Appearance" }
     ],
     "TextBlock": [
       { "Name": "Text", "Category": "Text" },
-      { "Name": "Width", "Category": "Layout" },
-      { "Name": "Height", "Category": "Layout" },
-      { "Name": "Margin", "Category": "Layout" },
-      { "Name": "HorizontalAlignment", "Category": "Layout" },
-      { "Name": "VerticalAlignment", "Category": "Layout" },
-      { "Name": "Visibility", "Category": "Appearance" },
       { "Name": "Foreground", "Category": "Appearance" },
       { "Name": "FontSize", "Category": "Appearance" }
     ],
     "TextBox": [
-      { "Name": "Text", "Category": "Text" },
-      { "Name": "Width", "Category": "Layout" },
-      { "Name": "Height", "Category": "Layout" },
-      { "Name": "Margin", "Category": "Layout" },
-      { "Name": "HorizontalAlignment", "Category": "Layout" },
-      { "Name": "VerticalAlignment", "Category": "Layout" },
-      { "Name": "Visibility", "Category": "Appearance" },
-      { "Name": "Foreground", "Category": "Appearance" },
-      { "Name": "Background", "Category": "Appearance" },
-      { "Name": "FontSize", "Category": "Appearance" },
-      { "Name": "IsEnabled", "Category": "Common Properties" }
-    ],
-    "ComboBox": [
-      { "Name": "Width", "Category": "Layout" },
-      { "Name": "Height", "Category": "Layout" },
-      { "Name": "Margin", "Category": "Layout" },
-      { "Name": "HorizontalAlignment", "Category": "Layout" },
-      { "Name": "VerticalAlignment", "Category": "Layout" },
-      { "Name": "Visibility", "Category": "Appearance" },
-      { "Name": "Foreground", "Category": "Appearance" },
-      { "Name": "Background", "Category": "Appearance" },
-      { "Name": "FontSize", "Category": "Appearance" },
-      { "Name": "IsEnabled", "Category": "Common Properties" }
-    ],
-    "Image": [
-      { "Name": "Width", "Category": "Layout" },
-      { "Name": "Height", "Category": "Layout" },
-      { "Name": "Margin", "Category": "Layout" },
-      { "Name": "HorizontalAlignment", "Category": "Layout" },
-      { "Name": "VerticalAlignment", "Category": "Layout" },
-      { "Name": "Visibility", "Category": "Appearance" }
-    ],
-    "StackPanel": [
-      { "Name": "Width", "Category": "Layout" },
-      { "Name": "Height", "Category": "Layout" },
-      { "Name": "Margin", "Category": "Layout" },
-      { "Name": "HorizontalAlignment", "Category": "Layout" },
-      { "Name": "VerticalAlignment", "Category": "Layout" },
-      { "Name": "Visibility", "Category": "Appearance" },
-      { "Name": "Background", "Category": "Appearance" }
-    ],
-    "Grid": [
-      { "Name": "Width", "Category": "Layout" },
-      { "Name": "Height", "Category": "Layout" },
-      { "Name": "Margin", "Category": "Layout" },
-      { "Name": "HorizontalAlignment", "Category": "Layout" },
-      { "Name": "VerticalAlignment", "Category": "Layout" },
-      { "Name": "Visibility", "Category": "Appearance" },
-      { "Name": "Background", "Category": "Appearance" }
-    ],
-    "Canvas": [
-      { "Name": "Width", "Category": "Layout" },
-      { "Name": "Height", "Category": "Layout" },
-      { "Name": "Margin", "Category": "Layout" },
-      { "Name": "HorizontalAlignment", "Category": "Layout" },
-      { "Name": "VerticalAlignment", "Category": "Layout" },
-      { "Name": "Visibility", "Category": "Appearance" },
-      { "Name": "Background", "Category": "Appearance" }
+      { "Name": "Text", "Category": "Text" }
     ]
   }
 }

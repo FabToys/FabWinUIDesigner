@@ -29,7 +29,7 @@ public sealed record ToolboxGroup(string Name, string[] Controls, bool ExpandedB
 /// </summary>
 /// <param name="ToolboxGroups">Toolbox groups, in display order - an array rather than an object keyed by name, since JSON/dictionary key order shouldn't be relied on. Separate from <see cref="ControlTypes"/>, which also includes types like "Canvas" that aren't Toolbox-addable.</param>
 /// <param name="DefaultAttributes">Control type name -> attribute name -> XAML value set on a control added from the Toolbox (plus the special <c>_default</c> fallback for a type with no entry). Missing from the file = none.</param>
-/// <param name="ControlTypes">Control type name -> its curated property list (plus the special <c>_default</c> fallback for a type with no entry).</param>
+/// <param name="ControlTypes">Class name -> its curated property list. Base classes (e.g. "FrameworkElement", "Control") are entries too: a control gets the entries of every class it inherits from (<see cref="ControlTypeResolver"/>). The special <c>_default</c> entry is for a name that isn't a WinUI type.</param>
 internal sealed record PropertyMetadataFile(
     ToolboxGroup[] ToolboxGroups,
     Dictionary<string, Dictionary<string, string>>? DefaultAttributes,
@@ -92,7 +92,7 @@ public static class PropertyGridSchema
 
         if (metadata.ControlTypes is null || !metadata.ControlTypes.ContainsKey("_default"))
         {
-            throw new InvalidDataException($"'{path}' needs a \"ControlTypes\" object with a \"_default\" entry (the property list for a control type with no entry of its own).");
+            throw new InvalidDataException($"'{path}' needs a \"ControlTypes\" object with a \"_default\" entry (the property list for an element that isn't a WinUI type and has no entry of its own).");
         }
 
         return metadata;
@@ -125,10 +125,11 @@ public static class PropertyGridSchema
 
     /// <summary>Gets the property list to show in the property grid for one control type.</summary>
     /// <param name="controlTypeName">The element's XAML type name, e.g. "Button".</param>
-    /// <returns>"Name" (x:Name - every element gets this first) followed by the type's specific properties, or just the <c>_default</c> layout-only set for an unrecognized type.</returns>
+    /// <returns>"Name" (x:Name - every element gets this first) followed by the properties listed for the type and its base classes, base class first (see <see cref="ControlTypeResolver.MergeEntries"/>); for a name that isn't a WinUI type and has no entry of its own, the <c>_default</c> set.</returns>
     public static IReadOnlyList<PropertyDescriptor> GetProperties(string controlTypeName)
     {
-        var specific = Metadata.ControlTypes.TryGetValue(controlTypeName, out var list) ? list : Metadata.ControlTypes["_default"];
-        return [new PropertyDescriptor("Name", CommonPropertiesCategory), .. specific];
+        var specific = ControlTypeResolver.MergeEntries(Metadata.ControlTypes, controlTypeName, d => d.Name)
+            ?? [.. Metadata.ControlTypes["_default"]];
+        return [new PropertyDescriptor("Name", CommonPropertiesCategory), .. specific.Where(d => d.Name != "Name")];
     }
 }
