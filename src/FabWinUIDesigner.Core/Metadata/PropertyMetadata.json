@@ -1,13 +1,10 @@
 {
-  "ToolboxOrder": [
-    "Button",
-    "TextBlock",
-    "TextBox",
-    "CheckBox",
-    "ComboBox",
-    "Image",
-    "StackPanel",
-    "Grid"
+  "ToolboxGroups": [
+    { "Name": "Common", "ExpandedByDefault": true, "Controls": [ "Button", "TextBlock", "TextBox", "CheckBox", "ComboBox", "Image", "StackPanel", "Grid" ] },
+    { "Name": "Basic input", "Controls": [ "Button", "CheckBox", "ComboBox" ] },
+    { "Name": "Text", "Controls": [ "TextBlock", "TextBox" ] },
+    { "Name": "Layout", "Controls": [ "Grid", "StackPanel" ] },
+    { "Name": "Media", "Controls": [ "Image" ] }
   ],
   "ControlTypes": {
     "_default": [

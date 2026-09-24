@@ -58,6 +58,15 @@ public sealed partial class MainWindow : Window
     // flag drives both grids, since they share BuildCategorizedGrid.
     private bool _alphabeticalPropertyView;
 
+    // Toolbox view: grouped by category (default) or one alphabetical list, plus which groups are
+    // expanded (by name). Both are kept in layout.json. Expanded rather than collapsed groups are
+    // stored, so a group added to the JSON later starts collapsed. Until layout.json has a list,
+    // the groups marked ExpandedByDefault in the JSON are the expanded ones.
+    private bool _alphabeticalToolboxView;
+    private HashSet<string> _expandedToolboxGroups = new(
+        PropertyGridSchema.ToolboxGroups.Where(g => g.ExpandedByDefault).Select(g => g.Name),
+        StringComparer.Ordinal);
+
     // The tab shown on the design surface and in the XAML editor, or null when no file is open.
     // _session is its file (document, path, undo/redo, saved state); CurrentDocument/CurrentFilePath
     // are shorthands for that file's two most-used parts.
@@ -121,15 +130,18 @@ public sealed partial class MainWindow : Window
         InitializeComponent();
         Title = AppTitle;
 
-        BuildToolbox();
-
         LoadPanelLayout();
         SnapToGridToggle.IsChecked = _snapToGridEnabled;
         AlphabeticalViewToggle.IsChecked = _alphabeticalPropertyView;
+        AlphabeticalToolboxToggle.IsChecked = _alphabeticalToolboxView;
         // Set directly too: the toggles' Checked/Unchecked handlers (which also sync the menu)
         // don't fire when the loaded value equals the default.
         SnapToGridMenuItem.IsChecked = _snapToGridEnabled;
         AlphabeticalViewMenuItem.IsChecked = _alphabeticalPropertyView;
+        AlphabeticalToolboxMenuItem.IsChecked = _alphabeticalToolboxView;
+
+        // After LoadPanelLayout, which says which view to build and which groups are collapsed.
+        BuildToolbox();
         DesignSurfaceHost.SizeChanged += (_, _) =>
         {
             GridOverlay.Width = DesignSurfaceHost.ActualWidth;
@@ -1440,30 +1452,147 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Populates the Toolbox from <see cref="PropertyGridSchema.ToolboxControlTypes"/> - the same
-    /// JSON file that drives the property grid, so adding a control type to the
-    /// app means editing one file instead of also hand-adding a XAML `Button` here.
+    /// Fills the Toolbox from the groups in the metadata JSON (<see cref="PropertyGridSchema.ToolboxGroups"/>)
+    /// - the same file that drives the property grid, so adding a control type to the app means
+    /// editing one file instead of also hand-adding a XAML `Button` here. Three layouts, VS-style:
+    /// while the search box has text, a flat alphabetical list of the matching controls; otherwise
+    /// either one collapsible section per group, or every control once in one alphabetical list.
     /// </summary>
     private void BuildToolbox()
     {
         ToolboxItemsPanel.Children.Clear();
 
-        foreach (var controlTypeName in PropertyGridSchema.ToolboxControlTypes)
+        var filter = ToolboxSearchBox.Text.Trim();
+        if (filter.Length > 0)
         {
-            var button = new Button
+            var matches = PropertyGridSchema.ToolboxControlTypes
+                .Where(name => name.Contains(filter, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (matches.Count == 0)
             {
-                Content = controlTypeName,
-                Tag = controlTypeName,
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-                HorizontalContentAlignment = HorizontalAlignment.Left,
-                Background = new SolidColorBrush(Colors.Transparent),
-                BorderThickness = new Thickness(0),
-                Padding = new Thickness(4, 6, 4, 6),
-            };
-            button.Click += ToolboxItem_Click;
-            ToolboxItemsPanel.Children.Add(button);
+                ToolboxItemsPanel.Children.Add(new TextBlock
+                {
+                    Text = "No matching controls",
+                    Foreground = new SolidColorBrush(Colors.Gray),
+                    FontSize = 12,
+                    Margin = new Thickness(4, 6, 4, 6),
+                });
+            }
+
+            foreach (var controlTypeName in matches)
+            {
+                ToolboxItemsPanel.Children.Add(CreateToolboxItem(controlTypeName, indent: 0));
+            }
+
+            return;
+        }
+
+        if (_alphabeticalToolboxView)
+        {
+            foreach (var controlTypeName in PropertyGridSchema.ToolboxControlTypes)
+            {
+                ToolboxItemsPanel.Children.Add(CreateToolboxItem(controlTypeName, indent: 0));
+            }
+
+            return;
+        }
+
+        foreach (var group in PropertyGridSchema.ToolboxGroups.Where(g => g.Controls.Length > 0))
+        {
+            var collapsed = !_expandedToolboxGroups.Contains(group.Name);
+            ToolboxItemsPanel.Children.Add(CreateToolboxGroupHeader(group.Name, collapsed));
+            if (collapsed)
+            {
+                continue;
+            }
+
+            foreach (var controlTypeName in group.Controls)
+            {
+                ToolboxItemsPanel.Children.Add(CreateToolboxItem(controlTypeName, indent: 12));
+            }
         }
     }
+
+    /// <summary>One clickable Toolbox entry: a flat, full-width button that adds a control of that type.</summary>
+    /// <param name="controlTypeName">The XAML type name, e.g. "Button" - shown as the label and passed to <see cref="AddControl"/>.</param>
+    /// <param name="indent">Extra left padding, so items read as belonging to the group header above them.</param>
+    private Button CreateToolboxItem(string controlTypeName, double indent)
+    {
+        var button = new Button
+        {
+            Content = controlTypeName,
+            Tag = controlTypeName,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Left,
+            Background = new SolidColorBrush(Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(4 + indent, 4, 4, 4),
+        };
+        button.Click += ToolboxItem_Click;
+        return button;
+    }
+
+    /// <summary>
+    /// A group header row: chevron plus bold group name, on the same light gray as the property
+    /// grid's category headers. Clicking it collapses or expands the group. Hand-rolled rather
+    /// than an <see cref="Expander"/>, whose default chrome is too tall for a dense Toolbox.
+    /// </summary>
+    /// <param name="groupName">The group's name, also the key in <see cref="_expandedToolboxGroups"/>.</param>
+    /// <param name="collapsed">Whether the group is currently collapsed (chevron pointing right).</param>
+    private Button CreateToolboxGroupHeader(string groupName, bool collapsed)
+    {
+        var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        content.Children.Add(new FontIcon { Glyph = collapsed ? "\uE76C" : "\uE70D", FontSize = 10 });
+        content.Children.Add(new TextBlock { Text = groupName, FontWeight = FontWeights.SemiBold, FontSize = 12 });
+
+        var header = new Button
+        {
+            Content = content,
+            Tag = groupName,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Left,
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0xF0, 0xF0, 0xF0)),
+            BorderThickness = new Thickness(0),
+            CornerRadius = new CornerRadius(0),
+            Padding = new Thickness(4, 3, 4, 3),
+            Margin = new Thickness(0, 4, 0, 2),
+        };
+        header.Click += ToolboxGroupHeader_Click;
+        return header;
+    }
+
+    /// <summary>Collapses or expands the clicked Toolbox group, and remembers it for the next start.</summary>
+    private void ToolboxGroupHeader_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: string groupName })
+        {
+            return;
+        }
+
+        if (!_expandedToolboxGroups.Remove(groupName))
+        {
+            _expandedToolboxGroups.Add(groupName);
+        }
+
+        BuildToolbox();
+        SavePanelLayout();
+    }
+
+    /// <summary>Filters the Toolbox as the user types.</summary>
+    private void ToolboxSearchBox_TextChanged(object sender, TextChangedEventArgs e) => BuildToolbox();
+
+    /// <summary>Switches the Toolbox between grouped and alphabetical, keeps the View menu in sync, and persists the choice.</summary>
+    private void AlphabeticalToolboxToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        _alphabeticalToolboxView = AlphabeticalToolboxToggle.IsChecked == true;
+        AlphabeticalToolboxMenuItem.IsChecked = _alphabeticalToolboxView;
+        BuildToolbox();
+        SavePanelLayout();
+    }
+
+    /// <summary>View → Alphabetical Toolbox: drives the Toolbox's toggle, whose handler does the actual work and keeps both in sync.</summary>
+    private void AlphabeticalToolboxMenuItem_Click(object sender, RoutedEventArgs e) =>
+        AlphabeticalToolboxToggle.IsChecked = AlphabeticalToolboxMenuItem.IsChecked;
 
     /// <summary>Adds a control of the type named by the clicked toolbox item's <c>Tag</c>.</summary>
     private void ToolboxItem_Click(object sender, RoutedEventArgs e)
@@ -3477,7 +3606,16 @@ public sealed partial class MainWindow : Window
     /// <param name="XamlSourceHeight">Height of the XAML source pane row.</param>
     /// <param name="SnapToGrid">Whether snap-to-grid was enabled. Defaults to false so layout files saved before this setting existed still deserialize.</param>
     /// <param name="AlphabeticalPropertyView">Whether the Properties/Events grids were showing the flat alphabetical view. Defaults to false (category-grouped) so layout files saved before this setting existed still deserialize.</param>
-    private sealed record PanelLayout(double ToolboxWidth, double FilePanelHeight, double XamlSourceHeight, bool SnapToGrid = false, bool AlphabeticalPropertyView = false);
+    /// <param name="AlphabeticalToolboxView">Whether the Toolbox was showing one alphabetical list instead of groups. Defaults to false for older layout files.</param>
+    /// <param name="ExpandedToolboxGroups">Names of the expanded Toolbox groups. Null in older layout files, which then get the JSON's ExpandedByDefault groups.</param>
+    private sealed record PanelLayout(
+        double ToolboxWidth,
+        double FilePanelHeight,
+        double XamlSourceHeight,
+        bool SnapToGrid = false,
+        bool AlphabeticalPropertyView = false,
+        bool AlphabeticalToolboxView = false,
+        string[]? ExpandedToolboxGroups = null);
 
     /// <summary>Restores panel sizes from <see cref="LayoutConfigPath"/>, leaving the XAML-declared defaults in place if the file is missing or unreadable.</summary>
     private void LoadPanelLayout()
@@ -3500,6 +3638,11 @@ public sealed partial class MainWindow : Window
             XamlSourceRow.Height = new GridLength(layout.XamlSourceHeight);
             _snapToGridEnabled = layout.SnapToGrid;
             _alphabeticalPropertyView = layout.AlphabeticalPropertyView;
+            _alphabeticalToolboxView = layout.AlphabeticalToolboxView;
+            if (layout.ExpandedToolboxGroups is not null)
+            {
+                _expandedToolboxGroups = new HashSet<string>(layout.ExpandedToolboxGroups, StringComparer.Ordinal);
+            }
         }
         catch (Exception)
         {
@@ -3512,7 +3655,14 @@ public sealed partial class MainWindow : Window
     {
         try
         {
-            var layout = new PanelLayout(ToolboxColumn.Width.Value, FilePanelRow.Height.Value, XamlSourceRow.Height.Value, _snapToGridEnabled, _alphabeticalPropertyView);
+            var layout = new PanelLayout(
+                ToolboxColumn.Width.Value,
+                FilePanelRow.Height.Value,
+                XamlSourceRow.Height.Value,
+                _snapToGridEnabled,
+                _alphabeticalPropertyView,
+                _alphabeticalToolboxView,
+                [.. _expandedToolboxGroups.Order(StringComparer.Ordinal)]);
             Directory.CreateDirectory(Path.GetDirectoryName(LayoutConfigPath)!);
             File.WriteAllText(LayoutConfigPath, JsonSerializer.Serialize(layout));
         }

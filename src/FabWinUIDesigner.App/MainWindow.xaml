@@ -70,6 +70,7 @@
             <MenuBarItem Title="View">
                 <ToggleMenuFlyoutItem x:Name="SnapToGridMenuItem" Text="Snap to Grid" Click="SnapToGridMenuItem_Click" />
                 <ToggleMenuFlyoutItem x:Name="AlphabeticalViewMenuItem" Text="Alphabetical Properties" Click="AlphabeticalViewMenuItem_Click" />
+                <ToggleMenuFlyoutItem x:Name="AlphabeticalToolboxMenuItem" Text="Alphabetical Toolbox" Click="AlphabeticalToolboxMenuItem_Click" />
             </MenuBarItem>
 
             <MenuBarItem Title="Help">
@@ -114,12 +115,46 @@
             </StackPanel>
         </Border>
 
-        <!-- Toolbox - items are built in code (MainWindow.BuildToolbox) from PropertyGridSchema.ToolboxControlTypes, itself read from Metadata/PropertyMetadata.json, instead of one hardcoded Button per control type here. -->
+        <!-- Toolbox - items are built in code (MainWindow.BuildToolbox) from the groups in
+             Metadata/PropertyMetadata.json, instead of one hardcoded Button per control type here. -->
         <Border Grid.Row="2" Grid.Column="0" BorderBrush="Gray" BorderThickness="0,0,1,0">
-            <StackPanel Padding="8" Spacing="4">
-                <TextBlock Text="Toolbox" FontWeight="Bold" Margin="0,0,0,8" />
-                <StackPanel x:Name="ToolboxItemsPanel" Spacing="4" />
-            </StackPanel>
+            <Grid Padding="8,8,0,8" RowSpacing="6">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <Grid Margin="0,0,8,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="Toolbox" FontWeight="Bold" VerticalAlignment="Center" />
+                    <!-- Same glyph and behaviour as the property grid's Alphabetical View toggle. -->
+                    <ToggleButton
+                        x:Name="AlphabeticalToolboxToggle"
+                        Grid.Column="1"
+                        Padding="4"
+                        Checked="AlphabeticalToolboxToggle_Toggled"
+                        Unchecked="AlphabeticalToolboxToggle_Toggled"
+                        ToolTipService.ToolTip="Alphabetical View">
+                        <FontIcon Glyph="&#xE8CB;" FontSize="12" />
+                    </ToggleButton>
+                </Grid>
+
+                <TextBox
+                    x:Name="ToolboxSearchBox"
+                    Grid.Row="1"
+                    Margin="0,0,8,0"
+                    FontSize="12"
+                    PlaceholderText="Search Toolbox"
+                    TextChanged="ToolboxSearchBox_TextChanged" />
+
+                <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
+                    <StackPanel x:Name="ToolboxItemsPanel" Padding="0,0,8,0" />
+                </ScrollViewer>
+            </Grid>
         </Border>
 
         <!-- Draggable splitter: Toolbox <-> Center -->

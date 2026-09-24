@@ -16,13 +16,19 @@ public enum PropertyEditorKind
 /// <param name="Category">Display group, e.g. "Layout"/"Appearance" (WinUI has no reflectable equivalent of WPF's <c>CategoryAttribute</c>, so this is curated, inspired by WPF's real category values).</param>
 public sealed record PropertyDescriptor(string Name, string Category);
 
+/// <summary>One Toolbox group, e.g. "Common" or "Layout".</summary>
+/// <param name="Name">Group header text.</param>
+/// <param name="Controls">XAML type names in the group, in display order. A control can be in several groups (e.g. "Common" and its own category), like VS's Toolbox.</param>
+/// <param name="ExpandedByDefault">Whether the group starts expanded, before the user has expanded or collapsed any group. Optional in the JSON; groups start collapsed otherwise.</param>
+public sealed record ToolboxGroup(string Name, string[] Controls, bool ExpandedByDefault = false);
+
 /// <summary>
-/// The JSON shape of <c>Metadata/PropertyMetadata.json</c>: which control types the Toolbox
-/// offers, in display order, plus each control type's curated property list.
+/// The JSON shape of <c>Metadata/PropertyMetadata.json</c>: the Toolbox's groups of control
+/// types, plus each control type's curated property list.
 /// </summary>
-/// <param name="ToolboxOrder">XAML type names, in the order Toolbox buttons should appear - deliberately separate from <see cref="ControlTypes"/>' key order, which JSON/dictionary ordering shouldn't be relied on for (and which includes types like "Canvas" that aren't Toolbox-addable).</param>
+/// <param name="ToolboxGroups">Toolbox groups, in display order - an array rather than an object keyed by name, since JSON/dictionary key order shouldn't be relied on. Separate from <see cref="ControlTypes"/>, which also includes types like "Canvas" that aren't Toolbox-addable.</param>
 /// <param name="ControlTypes">Control type name -> its curated property list (plus the special <c>_default</c> fallback for a type with no entry).</param>
-internal sealed record PropertyMetadataFile(string[] ToolboxOrder, Dictionary<string, PropertyDescriptor[]> ControlTypes);
+internal sealed record PropertyMetadataFile(ToolboxGroup[] ToolboxGroups, Dictionary<string, PropertyDescriptor[]> ControlTypes);
 
 /// <summary>
 /// The curated per-control-type property list for the MVP property grid, loaded from the loose
@@ -41,8 +47,12 @@ public static class PropertyGridSchema
 
     private static readonly PropertyMetadataFile Metadata = ControlMetadataLoader.Load<PropertyMetadataFile>("PropertyMetadata.json");
 
-    /// <summary>XAML type names the Toolbox should offer, in display order - e.g. "Button", "TextBlock", ... Excludes types like "Canvas" that exist in the property grid (as the document root) but aren't meant to be added from the Toolbox.</summary>
-    public static IReadOnlyList<string> ToolboxControlTypes => Metadata.ToolboxOrder;
+    /// <summary>The Toolbox's groups, in display order.</summary>
+    public static IReadOnlyList<ToolboxGroup> ToolboxGroups => Metadata.ToolboxGroups;
+
+    /// <summary>Every XAML type name the Toolbox offers, each once, sorted by name - the Toolbox's alphabetical view. Excludes types like "Canvas" that exist in the property grid (as the document root) but aren't meant to be added from the Toolbox.</summary>
+    public static IReadOnlyList<string> ToolboxControlTypes { get; } =
+        Metadata.ToolboxGroups.SelectMany(g => g.Controls).Distinct().Order(StringComparer.OrdinalIgnoreCase).ToList();
 
     /// <summary>Gets the property list to show in the property grid for one control type.</summary>
     /// <param name="controlTypeName">The element's XAML type name, e.g. "Button".</param>
