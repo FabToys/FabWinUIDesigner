@@ -6,6 +6,17 @@
     { "Name": "Layout", "Controls": [ "Grid", "StackPanel" ] },
     { "Name": "Media", "Controls": [ "Image" ] }
   ],
+  "DefaultAttributes": {
+    "_default": { "Width": "100", "Height": "32" },
+    "Button": { "Content": "Button", "Width": "100", "Height": "32" },
+    "TextBlock": { "Text": "TextBlock" },
+    "TextBox": { "Width": "120", "Height": "32" },
+    "CheckBox": { "Content": "CheckBox" },
+    "ComboBox": { "Width": "120" },
+    "Image": { "Width": "100", "Height": "100" },
+    "StackPanel": { "Width": "150", "Height": "100", "Background": "Transparent" },
+    "Grid": { "Width": "150", "Height": "100", "Background": "Transparent" }
+  },
   "ControlTypes": {
     "_default": [
       { "Name": "Width", "Category": "Layout" },

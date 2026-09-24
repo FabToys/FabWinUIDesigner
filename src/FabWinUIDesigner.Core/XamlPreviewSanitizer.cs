@@ -16,7 +16,7 @@ namespace FabWinUIDesigner.Core;
 public static class XamlPreviewSanitizer
 {
     // Not exhaustive - just the handful of events the MVP toolbox controls actually wire up
-    // (see MainWindow.AddControl/ApplyDefaultAttributes). A control type added later with an
+    // (the Toolbox's controls, listed in Metadata/PropertyMetadata.json). A control type added later with an
     // event not in this list would need it added here too, or StripClassAndEvents would leave
     // that attribute behind and the second-fallback preview load would fail the same way as
     // the first, unstripped attempt.

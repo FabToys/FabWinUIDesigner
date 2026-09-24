@@ -12,11 +12,41 @@ public sealed record EventDescriptor(string Name, string Category);
 /// <see cref="PropertyGridSchema"/>: WinUI controls carry no design-time metadata that could
 /// drive this automatically, so it's an explicit list. Deliberately narrower than "every event
 /// this type has" - just the ones a WinForms/WPF designer would typically surface by default.
+/// The user can switch to a file of their own at runtime (<see cref="Use"/>).
 /// </summary>
 public static class EventGridSchema
 {
-    private static readonly Dictionary<string, EventDescriptor[]> ByControlType =
-        ControlMetadataLoader.Load<Dictionary<string, EventDescriptor[]>>("EventMetadata.json");
+    /// <summary>File name of the built-in metadata file, next to the app's .exe under <c>Metadata\</c>.</summary>
+    public const string BuiltInFileName = "EventMetadata.json";
+
+    // Replaced as a whole by Use, never mutated.
+    private static Dictionary<string, EventDescriptor[]> ByControlType = Parse(ControlMetadataLoader.BuiltInPath(BuiltInFileName));
+
+    /// <summary>Checks that a file would load as event metadata, without switching to it.</summary>
+    /// <param name="path">Full path of the file.</param>
+    /// <exception cref="InvalidDataException">It wouldn't; the message says why.</exception>
+    public static void Validate(string path) => Parse(path);
+
+    /// <summary>Switches to another event metadata file. The file is fully loaded before anything is replaced, so a bad file leaves the current metadata in place.</summary>
+    /// <param name="path">Full path of the file, or null for the built-in one.</param>
+    /// <exception cref="InvalidDataException">The file couldn't be loaded; the message says why.</exception>
+    public static void Use(string? path) =>
+        ByControlType = Parse(path ?? ControlMetadataLoader.BuiltInPath(BuiltInFileName));
+
+    /// <summary>Loads an event metadata file: an object of control type name -> array of events.</summary>
+    /// <param name="path">Full path of the file.</param>
+    /// <exception cref="InvalidDataException">The file is missing, isn't valid JSON, or has an entry that isn't an array.</exception>
+    private static Dictionary<string, EventDescriptor[]> Parse(string path)
+    {
+        var byControlType = ControlMetadataLoader.LoadFile<Dictionary<string, EventDescriptor[]>>(path);
+        var badEntry = byControlType.FirstOrDefault(kvp => kvp.Value is null).Key;
+        if (badEntry is not null)
+        {
+            throw new InvalidDataException($"'{path}': \"{badEntry}\" should be an array of events.");
+        }
+
+        return byControlType;
+    }
 
     /// <summary>Gets the event list to show in the property grid's Events section for one control type.</summary>
     /// <param name="controlTypeName">The element's XAML type name, e.g. "Button".</param>

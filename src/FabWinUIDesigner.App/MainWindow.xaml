@@ -73,6 +73,12 @@
                 <ToggleMenuFlyoutItem x:Name="AlphabeticalToolboxMenuItem" Text="Alphabetical Toolbox" Click="AlphabeticalToolboxMenuItem_Click" />
             </MenuBarItem>
 
+            <MenuBarItem Title="Tools">
+                <MenuFlyoutItem Text="Options..." Click="OptionsMenuItem_Click">
+                    <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE713;" /></MenuFlyoutItem.Icon>
+                </MenuFlyoutItem>
+            </MenuBarItem>
+
             <MenuBarItem Title="Help">
                 <MenuFlyoutItem Text="About FabWinUI Designer" Click="AboutMenuItem_Click" />
             </MenuBarItem>

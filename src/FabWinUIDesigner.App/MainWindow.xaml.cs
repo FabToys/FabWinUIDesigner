@@ -50,8 +50,10 @@ public sealed partial class MainWindow : Window
     private const double MinElementSize = 8;
     private const double HandleSize = 7;
 
-    // Snap-to-grid. Spacing isn't user-configurable yet - a possible follow-up.
-    private const double GridSpacing = 8;
+    // Tools → Options choices (settings.json). Read once at startup, replaced as a whole on OK.
+    private AppSettings _settings = AppSettings.Load();
+
+    // Snap-to-grid; its spacing is _settings.GridSize.
     private bool _snapToGridEnabled;
 
     // Property/Events grid view toggle - one
@@ -61,9 +63,12 @@ public sealed partial class MainWindow : Window
     // Toolbox view: grouped by category (default) or one alphabetical list, plus which groups are
     // expanded (by name). Both are kept in layout.json. Expanded rather than collapsed groups are
     // stored, so a group added to the JSON later starts collapsed. Until layout.json has a list,
-    // the groups marked ExpandedByDefault in the JSON are the expanded ones.
+    // the groups marked ExpandedByDefault in the metadata are the expanded ones - worked out on
+    // first use, so from whichever metadata file is loaded by then (possibly a custom one).
     private bool _alphabeticalToolboxView;
-    private HashSet<string> _expandedToolboxGroups = new(
+    private HashSet<string>? _expandedToolboxGroupsSaved;
+
+    private HashSet<string> ExpandedToolboxGroups => _expandedToolboxGroupsSaved ??= new(
         PropertyGridSchema.ToolboxGroups.Where(g => g.ExpandedByDefault).Select(g => g.Name),
         StringComparer.Ordinal);
 
@@ -87,8 +92,8 @@ public sealed partial class MainWindow : Window
     // _sourceEditTimer, and when it fires the typed text is applied (TryApplyXamlSourceEdit).
     // _sourceEditPending is true while the editor holds typed text not applied yet - it also
     // counts as "unsaved", so Save lights up while typing. _keepEditorTextOnRefresh stops that
-    // apply's design-surface refresh from rewriting the editor under the user's caret.
-    private static readonly TimeSpan SourceEditApplyDelay = TimeSpan.FromMilliseconds(800);
+    // apply's design-surface refresh from rewriting the editor under the user's caret. The pause
+    // length is _settings.XamlApplyDelayMs.
     private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _sourceEditTimer;
     private bool _sourceEditPending;
     private bool _keepEditorTextOnRefresh;
@@ -130,6 +135,10 @@ public sealed partial class MainWindow : Window
         InitializeComponent();
         Title = AppTitle;
 
+        // Before anything reads the metadata (the Toolbox, below).
+        var metadataProblem = UseMetadataFiles(_settings);
+        ApplyEditorAppearance();
+
         LoadPanelLayout();
         SnapToGridToggle.IsChecked = _snapToGridEnabled;
         AlphabeticalViewToggle.IsChecked = _alphabeticalPropertyView;
@@ -168,6 +177,11 @@ public sealed partial class MainWindow : Window
         }
 
         RootGrid.Loaded += RestoreTabsOnce;
+
+        if (metadataProblem is not null)
+        {
+            SetStatus(metadataProblem);
+        }
 
         // Hover cursor: a plain <Grid> can't show one (UIElement.ProtectedCursor is protected),
         // hence SplitterThumb/ResizeHandle - see their doc comment.
@@ -242,7 +256,7 @@ public sealed partial class MainWindow : Window
         // can use it to select a word instead, which would make it do both.
         XamlSourceView.ControlW_SelectWord = false;
         _sourceEditTimer = DispatcherQueue.CreateTimer();
-        _sourceEditTimer.Interval = SourceEditApplyDelay;
+        _sourceEditTimer.Interval = TimeSpan.FromMilliseconds(_settings.XamlApplyDelayMs);
         _sourceEditTimer.IsRepeating = false;
         _sourceEditTimer.Tick += (_, _) => ApplySourceEditAfterPause();
         XamlSourceView.LostFocus += _ =>
@@ -282,10 +296,10 @@ public sealed partial class MainWindow : Window
         }
         """;
 
-    /// <summary>A blank single-Canvas Page, same shape as the sample fixtures minus x:Class (a brand-new file has no code-behind yet).</summary>
-    private const string NewDocumentTemplate =
+    /// <summary>A blank single-Canvas Page, same shape as the sample fixtures minus x:Class (a brand-new file has no code-behind yet), with the root Canvas in the Options' new-page background.</summary>
+    private string NewDocumentXaml() =>
         "<Page xmlns=\"http://schemas.microsoft.com/winfx/2006/xaml/presentation\" xmlns:x=\"http://schemas.microsoft.com/winfx/2006/xaml\" xmlns:d=\"http://schemas.microsoft.com/expression/blend/2008\" xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\" mc:Ignorable=\"d\">\n" +
-        "    <Canvas Width=\"400\" Height=\"300\" Background=\"White\" />\n" +
+        $"    <Canvas Width=\"400\" Height=\"300\" Background=\"{System.Security.SecurityElement.Escape(_settings.NewPageBackground)}\" />\n" +
         "</Page>";
 
     /// <summary>
@@ -358,7 +372,7 @@ public sealed partial class MainWindow : Window
     /// <summary>Opens a blank document in a new tab.</summary>
     private void NewFile()
     {
-        var session = new DocumentSession(XamlDocument.Parse(NewDocumentTemplate), filePath: null);
+        var session = new DocumentSession(XamlDocument.Parse(NewDocumentXaml()), filePath: null);
         AddTab(new DocumentTab(session, $"Untitled{++_untitledCount}"), activate: true);
         SetStatus("New file");
     }
@@ -486,6 +500,155 @@ public sealed partial class MainWindow : Window
 
         _closeConfirmed = true;
         Close();
+    }
+
+    /// <summary>Tools → Options: shows the settings dialog and applies what the user confirmed.</summary>
+    private async void OptionsMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OptionsDialog(_settings, _snapToGridEnabled, WinRT.Interop.WindowNative.GetWindowHandle(this))
+        {
+            XamlRoot = Content.XamlRoot,
+        };
+
+        ContentDialogResult result;
+        try
+        {
+            result = await dialog.ShowAsync();
+        }
+        catch (COMException)
+        {
+            // Another ContentDialog is already open.
+            return;
+        }
+
+        if (result == ContentDialogResult.Primary)
+        {
+            ApplySettings(dialog.Result, dialog.SnapToGrid);
+        }
+    }
+
+    /// <summary>Makes new settings take effect at once, and saves them.</summary>
+    /// <param name="settings">The settings confirmed in the Options dialog (already validated there).</param>
+    /// <param name="snapToGrid">Snap-to-grid as set in the dialog.</param>
+    private void ApplySettings(AppSettings settings, bool snapToGrid)
+    {
+        var metadataChanged = settings.PropertyMetadataPath != _settings.PropertyMetadataPath
+            || settings.EventMetadataPath != _settings.EventMetadataPath;
+        _settings = settings;
+        _settings.Save();
+
+        var status = "Options saved";
+        if (metadataChanged)
+        {
+            // The dialog loaded the files moments ago, but they could have changed since.
+            status = UseMetadataFiles(_settings) ?? "Options saved, control metadata reloaded";
+            BuildToolbox();
+            if (_selectedDesignElement is not null)
+            {
+                BuildPropertyGrid(_selectedDesignElement);
+            }
+        }
+
+        // The toggle's handler redraws the dots and saves the layout, but only when the value
+        // changes - the dots are redrawn here anyway, for a new grid size.
+        SnapToGridToggle.IsChecked = snapToGrid;
+        RenderGridOverlay();
+
+        _sourceEditTimer.Interval = TimeSpan.FromMilliseconds(_settings.XamlApplyDelayMs);
+        ApplyEditorAppearance();
+
+        TrimRecentList(_recentFiles);
+        TrimRecentList(_recentFolders);
+        SaveRecentLists();
+        RefreshRecentMenu();
+
+        SetStatus(status);
+    }
+
+    /// <summary>
+    /// Loads the property and event metadata files named in <paramref name="settings"/> (the
+    /// built-in ones where none is set). One that won't load - e.g. edited outside the designer
+    /// since it was chosen - is replaced by the built-in file rather than stopping the app.
+    /// </summary>
+    /// <returns>Null if every file loaded; otherwise a message for the status bar.</returns>
+    private static string? UseMetadataFiles(AppSettings settings)
+    {
+        var problems = new List<string>();
+        try
+        {
+            PropertyGridSchema.Use(settings.PropertyMetadataPath);
+        }
+        catch (InvalidDataException ex)
+        {
+            PropertyGridSchema.Use(null);
+            problems.Add(ex.Message);
+        }
+
+        try
+        {
+            EventGridSchema.Use(settings.EventMetadataPath);
+        }
+        catch (InvalidDataException ex)
+        {
+            EventGridSchema.Use(null);
+            problems.Add(ex.Message);
+        }
+
+        return problems.Count == 0 ? null : $"Using the built-in metadata instead: {string.Join(" ", problems)}";
+    }
+
+    /// <summary>
+    /// Applies the Options' font size and background to the XAML editor. The editor takes its
+    /// colours as one <see cref="TextControlBoxDesign"/> (null = its own default look), so a
+    /// custom background comes with matching text, caret, selection and line-number colours:
+    /// VS-like light ones, or light-on-dark ones for a dark background - which also switches the
+    /// editor to its dark theme, so the syntax highlighting uses its dark palette.
+    /// </summary>
+    private void ApplyEditorAppearance()
+    {
+        XamlSourceView.FontSize = _settings.EditorFontSize;
+
+        if (_settings.EditorBackground is not { } backgroundText || !PropertyValueConverter.TryParseColor(backgroundText, out var background))
+        {
+            XamlSourceView.Design = null;
+            XamlSourceView.RequestedTheme = ElementTheme.Default;
+            return;
+        }
+
+        // Perceived brightness (ITU-R BT.601 weights), 0..255.
+        var isDark = (0.299 * background.R) + (0.587 * background.G) + (0.114 * background.B) < 128;
+        XamlSourceView.RequestedTheme = isDark ? ElementTheme.Dark : ElementTheme.Light;
+        XamlSourceView.Design = isDark
+            ? new TextControlBoxDesign(
+                new SolidColorBrush(background),
+                textColor: Color.FromArgb(0xFF, 0xDC, 0xDC, 0xDC),
+                selectionColor: Color.FromArgb(0x99, 0x26, 0x4F, 0x78),
+                cursorColor: Colors.White,
+                lineHighlighterColor: Color.FromArgb(0x40, 0xFF, 0xFF, 0xFF),
+                lineNumberColor: Color.FromArgb(0xFF, 0x85, 0x85, 0x85),
+                lineNumberBackground: background,
+                searchHighlightColor: Color.FromArgb(0x99, 0x62, 0x33, 0x15),
+                invisibleCharacterColor: Color.FromArgb(0xFF, 0x50, 0x50, 0x50))
+            : new TextControlBoxDesign(
+                new SolidColorBrush(background),
+                textColor: Colors.Black,
+                selectionColor: Color.FromArgb(0x99, 0xAD, 0xD6, 0xFF),
+                cursorColor: Colors.Black,
+                lineHighlighterColor: Color.FromArgb(0x30, 0x00, 0x00, 0x00),
+                lineNumberColor: Color.FromArgb(0xFF, 0x2B, 0x91, 0xAF),
+                lineNumberBackground: background,
+                searchHighlightColor: Color.FromArgb(0x99, 0xF6, 0xB9, 0x4D),
+                invisibleCharacterColor: Color.FromArgb(0xFF, 0xBB, 0xBB, 0xBB));
+    }
+
+    /// <summary>Cuts a recent-files/folders list down to the Options' recent list length.</summary>
+    /// <param name="list">Either <see cref="_recentFiles"/> or <see cref="_recentFolders"/>.</param>
+    private void TrimRecentList(List<string> list)
+    {
+        if (list.Count > _settings.RecentListLength)
+        {
+            list.RemoveRange(_settings.RecentListLength, list.Count - _settings.RecentListLength);
+        }
     }
 
     /// <summary>Help → About: app name and version.</summary>
@@ -678,7 +841,6 @@ public sealed partial class MainWindow : Window
         public override string ToString() => DisplayName;
     }
 
-    private const int MaxRecentEntries = 8;
     private readonly List<string> _recentFiles = new();
     private readonly List<string> _recentFolders = new();
 
@@ -734,18 +896,14 @@ public sealed partial class MainWindow : Window
     /// <param name="path">Absolute path of the folder just opened.</param>
     private void AddRecentFolder(string path) => AddRecent(_recentFolders, path);
 
-    /// <summary>Moves <paramref name="path"/> to the front of <paramref name="list"/> (de-duplicated, case-insensitively), trims it to <see cref="MaxRecentEntries"/>, then persists and re-renders the Recent menu.</summary>
+    /// <summary>Moves <paramref name="path"/> to the front of <paramref name="list"/> (de-duplicated, case-insensitively), trims it to the Options' recent list length, then persists and re-renders the Recent menu.</summary>
     /// <param name="list">Either <see cref="_recentFiles"/> or <see cref="_recentFolders"/>.</param>
     /// <param name="path">Absolute path to add.</param>
     private void AddRecent(List<string> list, string path)
     {
         list.RemoveAll(p => string.Equals(p, path, StringComparison.OrdinalIgnoreCase));
         list.Insert(0, path);
-        if (list.Count > MaxRecentEntries)
-        {
-            list.RemoveRange(MaxRecentEntries, list.Count - MaxRecentEntries);
-        }
-
+        TrimRecentList(list);
         SaveRecentLists();
         RefreshRecentMenu();
     }
@@ -1160,6 +1318,11 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private void RestoreOpenTabs()
     {
+        if (!_settings.ReopenTabsOnStart)
+        {
+            return;
+        }
+
         OpenTabList? list;
         try
         {
@@ -1499,7 +1662,7 @@ public sealed partial class MainWindow : Window
 
         foreach (var group in PropertyGridSchema.ToolboxGroups.Where(g => g.Controls.Length > 0))
         {
-            var collapsed = !_expandedToolboxGroups.Contains(group.Name);
+            var collapsed = !ExpandedToolboxGroups.Contains(group.Name);
             ToolboxItemsPanel.Children.Add(CreateToolboxGroupHeader(group.Name, collapsed));
             if (collapsed)
             {
@@ -1537,7 +1700,7 @@ public sealed partial class MainWindow : Window
     /// grid's category headers. Clicking it collapses or expands the group. Hand-rolled rather
     /// than an <see cref="Expander"/>, whose default chrome is too tall for a dense Toolbox.
     /// </summary>
-    /// <param name="groupName">The group's name, also the key in <see cref="_expandedToolboxGroups"/>.</param>
+    /// <param name="groupName">The group's name, also the key in <see cref="ExpandedToolboxGroups"/>.</param>
     /// <param name="collapsed">Whether the group is currently collapsed (chevron pointing right).</param>
     private Button CreateToolboxGroupHeader(string groupName, bool collapsed)
     {
@@ -1569,9 +1732,9 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        if (!_expandedToolboxGroups.Remove(groupName))
+        if (!ExpandedToolboxGroups.Remove(groupName))
         {
-            _expandedToolboxGroups.Add(groupName);
+            ExpandedToolboxGroups.Add(groupName);
         }
 
         BuildToolbox();
@@ -1608,7 +1771,7 @@ public sealed partial class MainWindow : Window
     /// with sensible defaults, then does a full reload and selects it so the user can
     /// immediately drag it into place. v1 only supports a Canvas root, so this doesn't attempt to target nested containers.
     /// </summary>
-    /// <param name="localName">The XAML element name to add, e.g. "Button" (must be one of the types <see cref="ApplyDefaultAttributes"/> knows defaults for).</param>
+    /// <param name="localName">The XAML element name to add, e.g. "Button". Its starting attributes come from the metadata JSON (<see cref="PropertyGridSchema.GetDefaultAttributes"/>).</param>
     private void AddControl(string localName)
     {
         if (CurrentDocument is null)
@@ -1634,53 +1797,14 @@ public sealed partial class MainWindow : Window
         child.SetAttribute("Canvas.Left", offset);
         child.SetAttribute("Canvas.Top", offset);
 
-        ApplyDefaultAttributes(child, localName);
+        foreach (var (attributeName, value) in PropertyGridSchema.GetDefaultAttributes(localName))
+        {
+            child.SetAttribute(attributeName, value);
+        }
 
         CommitUndoableChange();
         RefreshDesignSurfaceFromDocument();
         SelectByName(name);
-    }
-
-    /// <summary>Sets a handful of sensible default attributes (size, placeholder content, ...) so a freshly-added control isn't invisible or zero-sized on the design surface.</summary>
-    /// <param name="element">The just-added element to set attributes on.</param>
-    /// <param name="localName">The element's XAML type name, e.g. "Button" - selects which defaults apply.</param>
-    private static void ApplyDefaultAttributes(DesignElement element, string localName)
-    {
-        switch (localName)
-        {
-            case "Button":
-                element.SetAttribute("Content", "Button");
-                element.SetAttribute("Width", "100");
-                element.SetAttribute("Height", "32");
-                break;
-            case "TextBlock":
-                element.SetAttribute("Text", "TextBlock");
-                break;
-            case "TextBox":
-                element.SetAttribute("Width", "120");
-                element.SetAttribute("Height", "32");
-                break;
-            case "CheckBox":
-                element.SetAttribute("Content", "CheckBox");
-                break;
-            case "ComboBox":
-                element.SetAttribute("Width", "120");
-                break;
-            case "Image":
-                element.SetAttribute("Width", "100");
-                element.SetAttribute("Height", "100");
-                break;
-            case "StackPanel":
-            case "Grid":
-                element.SetAttribute("Width", "150");
-                element.SetAttribute("Height", "100");
-                // A Panel with no Background (the default) isn't hit-testable across its empty
-                // area - only actual child content would be, and a freshly-added container has
-                // none yet, making it completely unselectable by clicking inside its bounds.
-                // Transparent is a real (if invisible) brush, so hit-testing still works.
-                element.SetAttribute("Background", "Transparent");
-                break;
-        }
     }
 
     /// <summary>Finds the next unused "{localName}{N}" name by scanning the whole document, so it stays unique even across files that already name things that way.</summary>
@@ -1935,7 +2059,7 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>Rounds a coordinate/length to the nearest grid line when snap-to-grid is on; returns it unchanged otherwise.</summary>
-    private double Snap(double value) => _snapToGridEnabled ? Math.Round(value / GridSpacing) * GridSpacing : value;
+    private double Snap(double value) => _snapToGridEnabled ? Math.Round(value / _settings.GridSize) * _settings.GridSize : value;
 
     /// <summary>Toggles snap-to-grid, redraws the dot overlay to match, and persists the new state.</summary>
     private void SnapToGridToggle_Toggled(object sender, RoutedEventArgs e)
@@ -1959,9 +2083,9 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        for (var x = 0.0; x < GridOverlay.Width; x += GridSpacing)
+        for (var x = 0.0; x < GridOverlay.Width; x += _settings.GridSize)
         {
-            for (var y = 0.0; y < GridOverlay.Height; y += GridSpacing)
+            for (var y = 0.0; y < GridOverlay.Height; y += _settings.GridSize)
             {
                 var dot = new Microsoft.UI.Xaml.Shapes.Rectangle
                 {
@@ -2897,7 +3021,7 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Fires once typing has paused for <see cref="SourceEditApplyDelay"/>: applies the typed text
+    /// Fires once typing has paused for the Options' apply delay: applies the typed text
     /// (or shows its errors) without rewriting the editor under the caret, then re-selects the
     /// element the caret is in, since the design-surface refresh clears the selection.
     /// </summary>
@@ -3641,7 +3765,7 @@ public sealed partial class MainWindow : Window
             _alphabeticalToolboxView = layout.AlphabeticalToolboxView;
             if (layout.ExpandedToolboxGroups is not null)
             {
-                _expandedToolboxGroups = new HashSet<string>(layout.ExpandedToolboxGroups, StringComparer.Ordinal);
+                _expandedToolboxGroupsSaved = new HashSet<string>(layout.ExpandedToolboxGroups, StringComparer.Ordinal);
             }
         }
         catch (Exception)
@@ -3662,7 +3786,7 @@ public sealed partial class MainWindow : Window
                 _snapToGridEnabled,
                 _alphabeticalPropertyView,
                 _alphabeticalToolboxView,
-                [.. _expandedToolboxGroups.Order(StringComparer.Ordinal)]);
+                [.. ExpandedToolboxGroups.Order(StringComparer.Ordinal)]);
             Directory.CreateDirectory(Path.GetDirectoryName(LayoutConfigPath)!);
             File.WriteAllText(LayoutConfigPath, JsonSerializer.Serialize(layout));
         }
