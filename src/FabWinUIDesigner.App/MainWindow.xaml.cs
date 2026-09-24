@@ -1928,7 +1928,13 @@ public sealed partial class MainWindow : Window
         // that made clicks land far to the right (off by the Toolbox column's width) while
         // Y looked roughly right (off only by DesignSurfaceHost's own small top margin).
         var hostPoint = e.GetCurrentPoint(Content).Position;
-        var hits = VisualTreeHelper.FindElementsInHostCoordinates(hostPoint, DesignSurfaceHost);
+
+        // includeAllElements: every element under the point, not only hit-testable ones. WinUI
+        // makes a disabled control (IsEnabled="False") non-hit-testable, so without this it
+        // couldn't be selected on the design surface at all; the same goes for an element with
+        // IsHitTestVisible="False" or a panel with no Background. In a designer all of them
+        // should be clickable, whatever they'd do at run time.
+        var hits = VisualTreeHelper.FindElementsInHostCoordinates(hostPoint, DesignSurfaceHost, includeAllElements: true);
 
         // Our own move-drag math needs DesignSurfaceHost-local coordinates instead, since
         // that's the space Canvas.Left/Top live in.
