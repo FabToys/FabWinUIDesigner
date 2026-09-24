@@ -1,6 +1,8 @@
+using System.Globalization;
 using System.Reflection;
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Media;
 using Windows.UI;
 using FabWinUIDesigner.Document;
 
@@ -60,6 +62,24 @@ public static class PropertyValueConverter
         thickness = default;
         return false;
     }
+
+    /// <summary>
+    /// Formats a live property value the way it would be written in XAML, to show the value in
+    /// effect when the XAML doesn't set the property (the property grid's grey placeholder).
+    /// </summary>
+    /// <param name="value">The value read from the live element.</param>
+    /// <returns>The text, or null for a value with no useful XAML text (null, a non-solid brush, an arbitrary object) - better nothing than a CLR type name.</returns>
+    public static string? FormatForDisplay(object? value) => value switch
+    {
+        double d when double.IsNaN(d) => "Auto",
+        double d => d.ToString(CultureInfo.InvariantCulture),
+        float f => f.ToString(CultureInfo.InvariantCulture),
+        int i => i.ToString(CultureInfo.InvariantCulture),
+        string s => s,
+        Thickness t => FormatThickness(t),
+        SolidColorBrush b => $"#{b.Color.A:X2}{b.Color.R:X2}{b.Color.G:X2}{b.Color.B:X2}",
+        _ => null,
+    };
 
     /// <summary>Formats a Thickness back to XAML attribute text, collapsing to a single number when all 4 sides are equal.</summary>
     /// <param name="thickness">The thickness to format.</param>

@@ -2338,7 +2338,6 @@ public sealed partial class MainWindow : Window
     private void BuildPropertyGrid(DesignElement designElement)
     {
         var descriptors = PropertyGridSchema.GetProperties(designElement.LocalName);
-        var liveType = _selectedLiveElement?.GetType();
 
         BuildCategorizedGrid(
             PropertyGridPanel,
@@ -2347,7 +2346,7 @@ public sealed partial class MainWindow : Window
             _alphabeticalPropertyView,
             getName: d => d.Name,
             getCategory: d => d.Category,
-            createEditor: d => CreatePropertyEditor(designElement, d, liveType));
+            createEditor: d => CreatePropertyEditor(designElement, d, _selectedLiveElement));
 
         BuildEventsGrid(designElement);
     }
@@ -2555,9 +2554,9 @@ public sealed partial class MainWindow : Window
     /// <summary>Creates the property grid's editor control for one property - a <see cref="CheckBox"/>, <see cref="ComboBox"/>, or plain <see cref="TextBox"/> depending on the property's live CLR type (<see cref="PropertyKindResolver"/>) - wired to call <see cref="ApplyPropertyEdit"/> when its value changes.</summary>
     /// <param name="designElement">The selected element the property belongs to.</param>
     /// <param name="descriptor">Describes the property's name and category.</param>
-    /// <param name="liveType">The selected live element's CLR type, used to reflect the actual property and so its editor kind - <c>null</c> falls back to a plain text editor (nothing selected).</param>
+    /// <param name="liveElement">The selected live element: its CLR property decides the editor kind, and its current value is shown when the XAML doesn't set the property - <c>null</c> falls back to a plain text editor (nothing selected).</param>
     /// <returns>The editor control, ready to place in the property grid.</returns>
-    private FrameworkElement CreatePropertyEditor(DesignElement designElement, PropertyDescriptor descriptor, Type? liveType)
+    private FrameworkElement CreatePropertyEditor(DesignElement designElement, PropertyDescriptor descriptor, UIElement? liveElement)
     {
         // "Name" is x:Name (a namespaced attribute, via DesignElement.Name), not a plain
         // unprefixed "Name" attribute - same special case ApplyPropertyEdit already applies on
@@ -2566,7 +2565,26 @@ public sealed partial class MainWindow : Window
         var currentText = descriptor.Name == "Name"
             ? designElement.Name ?? string.Empty
             : designElement.GetAttribute(descriptor.Name) ?? string.Empty;
-        var (kind, enumValues) = PropertyKindResolver.Resolve(liveType?.GetProperty(descriptor.Name));
+        var property = liveElement?.GetType().GetProperty(descriptor.Name);
+        var (kind, enumValues) = PropertyKindResolver.Resolve(property);
+
+        // Not set in the XAML: show the value really in effect on the live element (WinUI's
+        // default, theme values included) instead of a blank/unchecked/first-item editor that
+        // reads as a different value - e.g. IsEnabled unchecked on an enabled Button. Only for
+        // display: each editor below gets it before its change handler is attached, so showing
+        // a default never writes an attribute.
+        object? liveValue = null;
+        if (currentText.Length == 0 && property is not null && descriptor.Name != "Name")
+        {
+            try
+            {
+                liveValue = property.GetValue(liveElement);
+            }
+            catch (Exception ex) when (ex is System.Reflection.TargetInvocationException or InvalidOperationException or COMException)
+            {
+                // A getter that fails on a design-time element just means no default is shown.
+            }
+        }
 
         // Bool -> CheckBox, Enum -> ComboBox of its named values, everything else -> a plain
         // TextBox (numbers, colors, thicknesses, ... are all typed as free text and parsed in
@@ -2575,7 +2593,10 @@ public sealed partial class MainWindow : Window
         {
             case PropertyEditorKind.Bool:
             {
-                var checkBox = new CheckBox { IsChecked = string.Equals(currentText, "True", StringComparison.OrdinalIgnoreCase) };
+                var isChecked = currentText.Length > 0
+                    ? string.Equals(currentText, "True", StringComparison.OrdinalIgnoreCase)
+                    : liveValue is true;
+                var checkBox = new CheckBox { IsChecked = isChecked };
                 checkBox.Checked += (_, _) => ApplyPropertyEdit(designElement, descriptor, "True");
                 checkBox.Unchecked += (_, _) => ApplyPropertyEdit(designElement, descriptor, "False");
                 return checkBox;
@@ -2585,7 +2606,8 @@ public sealed partial class MainWindow : Window
             {
                 var values = enumValues ?? [];
                 var combo = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch, ItemsSource = values };
-                combo.SelectedItem = values.FirstOrDefault(v => string.Equals(v, currentText, StringComparison.OrdinalIgnoreCase)) ?? values.FirstOrDefault();
+                var shownText = currentText.Length > 0 ? currentText : liveValue?.ToString() ?? string.Empty;
+                combo.SelectedItem = values.FirstOrDefault(v => string.Equals(v, shownText, StringComparison.OrdinalIgnoreCase)) ?? values.FirstOrDefault();
                 combo.SelectionChanged += (_, _) =>
                 {
                     if (combo.SelectedItem is string selected)
@@ -2600,7 +2622,13 @@ public sealed partial class MainWindow : Window
             {
                 // IsSpellCheckEnabled=false: property values (colors, numbers, short content
                 // strings) aren't prose, so the spell-checker's red squiggles are just noise here.
-                var textBox = new TextBox { Text = currentText, IsSpellCheckEnabled = false };
+                // The value in effect, greyed out, when the XAML doesn't set one.
+                var textBox = new TextBox
+                {
+                    Text = currentText,
+                    PlaceholderText = PropertyValueConverter.FormatForDisplay(liveValue) ?? string.Empty,
+                    IsSpellCheckEnabled = false,
+                };
                 textBox.LostFocus += (_, _) => ApplyPropertyEdit(designElement, descriptor, textBox.Text);
                 return textBox;
             }
