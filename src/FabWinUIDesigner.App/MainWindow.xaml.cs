@@ -111,6 +111,13 @@ public sealed partial class MainWindow : Window
     // can never drive a reselect; real user caret movement is unaffected.
     private bool _suppressSourceSelectionSync;
 
+    // A caret position our own code put there (loading text, restoring a tab). The editor can
+    // report it again later through SelectionChanged - on its next cursor redraw, which only
+    // happens while it has focus - long after _suppressSourceSelectionSync was reset. That report
+    // isn't the user moving the caret, so XamlSourceView_SelectionChanged ignores the caret while
+    // it's still at this position; the first move elsewhere clears it.
+    private (int Line, int Character)? _caretSetByCode;
+
     // Move drag state (set while a PointerPressed-on-an-element -> PointerMoved -> PointerReleased
     // sequence is in progress on DesignSurfaceHost).
     private UIElement? _moveElement;
@@ -1188,6 +1195,8 @@ public sealed partial class MainWindow : Window
                 XamlSourceView.SetCursorPosition(state.CaretLine, state.CaretCharacter, scrollIntoView: true, autoClamp: true);
                 XamlSourceView.VerticalScroll = state.EditorVerticalScroll;
                 XamlSourceView.HorizontalScroll = state.EditorHorizontalScroll;
+                var restoredCaret = XamlSourceView.CursorPosition;
+                _caretSetByCode = (restoredCaret.LineNumber, restoredCaret.CharacterPosition);
             }
             finally
             {
@@ -2925,6 +2934,17 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        var caretNow = XamlSourceView.CursorPosition;
+        if (_caretSetByCode is { } setByCode)
+        {
+            if (setByCode == (caretNow.LineNumber, caretNow.CharacterPosition))
+            {
+                return;
+            }
+
+            _caretSetByCode = null;
+        }
+
         try
         {
             // Positions come from the editor's own text. It's either the document's text, or an
@@ -3538,6 +3558,11 @@ public sealed partial class MainWindow : Window
         try
         {
             XamlSourceView.LoadText(text, autodetectTabsSpaces: false);
+
+            // Put the caret at the start ourselves, so where the editor leaves it after a load
+            // (it can end up at the end of the text) is never read as a user move - see _caretSetByCode.
+            XamlSourceView.SetCursorPosition(0, 0, scrollIntoView: false, autoClamp: true);
+            _caretSetByCode = (0, 0);
         }
         finally
         {
