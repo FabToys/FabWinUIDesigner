@@ -34,8 +34,9 @@ namespace FabWinUIDesigner.App;
 
 /// <summary>
 /// The designer's single window: file browser, toolbox, design surface (with selection/move/resize
-/// adorners), XAML source view, and property grid, all wired directly in code-behind against a
-/// single in-memory <see cref="XamlDocument"/>.
+/// adorners), XAML source view, and property grid, all wired directly in code-behind. Several
+/// files can be open in tabs (<see cref="DocumentTab"/>); the panels show the active tab's
+/// in-memory <see cref="XamlDocument"/>.
 /// </summary>
 public sealed partial class MainWindow : Window
 {
@@ -57,9 +58,11 @@ public sealed partial class MainWindow : Window
     // flag drives both grids, since they share BuildCategorizedGrid.
     private bool _alphabeticalPropertyView;
 
-    // The open file (document, path, undo/redo, saved state), or null before one is opened.
-    // CurrentDocument/CurrentFilePath are shorthands for its two most-used parts.
-    private DocumentSession? _session;
+    // The tab shown on the design surface and in the XAML editor, or null when no file is open.
+    // _session is its file (document, path, undo/redo, saved state); CurrentDocument/CurrentFilePath
+    // are shorthands for that file's two most-used parts.
+    private DocumentTab? _activeTab;
+    private DocumentSession? _session => _activeTab?.Session;
     private XamlDocument? CurrentDocument => _session?.Document;
     private string? CurrentFilePath => _session?.FilePath;
     private IReadOnlyDictionary<UIElement, DesignElement> _liveToDesign = new Dictionary<UIElement, DesignElement>();
@@ -142,6 +145,17 @@ public sealed partial class MainWindow : Window
         AttachRowSplitter(FilePropertiesSplitter, FilePanelRow, minHeight: 80, maxHeight: 600, SavePanelLayout);
         Closed += (_, _) => SavePanelLayout();
         Activated += MainWindow_Activated;
+        AppWindow.Closing += AppWindow_Closing;
+
+        // Reopening last session's tabs waits for the window's content to be loaded, so their
+        // first render (and its deferred layout/snapshot work) runs against a live window.
+        void RestoreTabsOnce(object sender, RoutedEventArgs e)
+        {
+            RootGrid.Loaded -= RestoreTabsOnce;
+            RestoreOpenTabs();
+        }
+
+        RootGrid.Loaded += RestoreTabsOnce;
 
         // Hover cursor: a plain <Grid> can't show one (UIElement.ProtectedCursor is protected),
         // hence SplitterThumb/ResizeHandle - see their doc comment.
@@ -211,6 +225,10 @@ public sealed partial class MainWindow : Window
             XamlSourceView_SelectionChanged();
         };
         XamlSourceView.TextChanged += _ => XamlSourceView_TextChanged();
+
+        // Ctrl+W closes the tab (RootGrid_KeyDown), even while typing in the editor - the editor
+        // can use it to select a word instead, which would make it do both.
+        XamlSourceView.ControlW_SelectWord = false;
         _sourceEditTimer = DispatcherQueue.CreateTimer();
         _sourceEditTimer.Interval = SourceEditApplyDelay;
         _sourceEditTimer.IsRepeating = false;
@@ -221,6 +239,10 @@ public sealed partial class MainWindow : Window
             XamlSourceView_LostFocus();
         };
         XamlSourceView.GotFocus += _ => _xamlSourceViewHasFocus = true;
+
+        // GotFocus bubbles up from whichever element got focus, and can't be marked handled on
+        // the way, so one handler on the root sees every focus change inside the window.
+        RootGrid.GotFocus += RootGrid_GotFocus;
     }
 
     /// <summary>
@@ -255,48 +277,77 @@ public sealed partial class MainWindow : Window
         "</Page>";
 
     /// <summary>
-    /// Asks whether to discard the current document's unsaved changes, if it has any.
+    /// VS-style "Save changes?" prompt before closing tabs (one tab, or all of them on exit), for
+    /// those with unsaved changes. Save goes through them one at a time, showing each and asking
+    /// for a location if it was never saved.
     /// </summary>
-    /// <param name="consequence">What discarding leads to, completing "This file has unsaved changes. ..." - e.g. "Starting a new file will discard them."</param>
-    /// <returns>True if there's nothing unsaved or the user chose Discard; false if they cancelled.</returns>
-    private async Task<bool> ConfirmDiscardChangesAsync(string consequence)
+    /// <param name="tabs">The tabs about to be closed.</param>
+    /// <returns>True if nothing was unsaved, the user chose Don't Save, or every save succeeded; false if they cancelled (the dialog or a Save As).</returns>
+    private async Task<bool> ConfirmSaveTabsAsync(IReadOnlyList<DocumentTab> tabs)
     {
-        // SaveButton.IsEnabled doubles as our "is dirty" flag (see UpdateCommandStates) - ask
-        // for confirmation only when there's actually something that would be lost.
-        if (!SaveButton.IsEnabled)
+        var dirtyTabs = tabs.Where(IsTabDirty).ToList();
+        if (dirtyTabs.Count == 0)
         {
             return true;
         }
 
         var dialog = new ContentDialog
         {
-            Title = "Discard unsaved changes?",
-            Content = $"This file has unsaved changes. {consequence}",
-            PrimaryButtonText = "Discard",
+            Title = "Save changes?",
+            Content = dirtyTabs.Count == 1
+                ? $"Save changes to {dirtyTabs[0].DisplayName}?"
+                : "Save changes to the following files?\n\n" + string.Join("\n", dirtyTabs.Select(t => t.DisplayName)),
+            PrimaryButtonText = "Save",
+            SecondaryButtonText = "Don't Save",
             CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Close,
+            DefaultButton = ContentDialogButton.Primary,
             XamlRoot = Content.XamlRoot,
         };
 
-        return await dialog.ShowAsync() == ContentDialogResult.Primary;
-    }
-
-    private async void NewButton_Click(object sender, RoutedEventArgs e) => await NewFileAsync();
-
-    /// <summary>Starts a blank document, confirming discard first if the current one has unsaved changes.</summary>
-    private async Task NewFileAsync()
-    {
-        if (!await ConfirmDiscardChangesAsync("Starting a new file will discard them."))
+        ContentDialogResult result;
+        try
         {
-            return;
+            result = await dialog.ShowAsync();
+        }
+        catch (COMException)
+        {
+            // Another ContentDialog is already open (e.g. a second click on a tab's X while this
+            // one is showing) - treat it as Cancel.
+            return false;
         }
 
-        // Same as LoadFile, but from the blank template and with no path yet.
-        _session = new DocumentSession(XamlDocument.Parse(NewDocumentTemplate), filePath: null);
+        if (result == ContentDialogResult.Secondary)
+        {
+            return true;
+        }
 
-        RefreshDesignSurfaceFromDocument();
-        SelectDocumentRootAfterLayout();
-        UpdateCommandStates();
+        if (result != ContentDialogResult.Primary)
+        {
+            return false;
+        }
+
+        foreach (var tab in dirtyTabs)
+        {
+            ActivateTab(tab);
+            if (!await SaveCurrentDocumentAsync())
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private void NewButton_Click(object sender, RoutedEventArgs e) => NewFile();
+
+    // Numbers the untitled tabs (Untitled1, Untitled2, ...) for this run of the app.
+    private int _untitledCount;
+
+    /// <summary>Opens a blank document in a new tab.</summary>
+    private void NewFile()
+    {
+        var session = new DocumentSession(XamlDocument.Parse(NewDocumentTemplate), filePath: null);
+        AddTab(new DocumentTab(session, $"Untitled{++_untitledCount}"), activate: true);
         SetStatus("New file");
     }
 
@@ -313,7 +364,7 @@ public sealed partial class MainWindow : Window
         var file = await picker.PickSingleFileAsync();
         if (file is not null)
         {
-            LoadFile(file.Path);
+            OpenFileInTab(file.Path);
         }
     }
 
@@ -331,17 +382,18 @@ public sealed partial class MainWindow : Window
     /// edit was silently discarded.
     /// </summary>
     /// <param name="saveAs">True to always prompt for a location (Save As), even if the document already has a path.</param>
-    private async Task SaveCurrentDocumentAsync(bool saveAs = false)
+    /// <returns>True if the document was saved; false if there was none, its pending edit is invalid, or the user cancelled the location prompt.</returns>
+    private async Task<bool> SaveCurrentDocumentAsync(bool saveAs = false)
     {
         if (!TryApplyXamlSourceEdit())
         {
-            return;
+            return false;
         }
 
         var session = _session;
         if (session is null)
         {
-            return;
+            return false;
         }
 
         // A document created via New File has no path yet - prompt for one, same as "Save As".
@@ -357,7 +409,7 @@ public sealed partial class MainWindow : Window
             var file = await picker.PickSaveFileAsync();
             if (file is null)
             {
-                return;
+                return false;
             }
 
             newPath = file.Path;
@@ -368,15 +420,60 @@ public sealed partial class MainWindow : Window
         SetStatus($"Saved {Path.GetFileName(session.FilePath)}");
         AddRecentFile(session.FilePath!);
         SyncEventHandlerStubs();
+
+        // A first save or Save As gives the tab a (new) path to reopen next time.
+        SaveOpenTabs();
+        return true;
     }
 
-    /// <summary>File → Exit: closes the window, after the same "discard unsaved changes?" check as New File.</summary>
-    private async void ExitMenuItem_Click(object sender, RoutedEventArgs e)
+    /// <summary>File → Exit: same as the window's close button.</summary>
+    private async void ExitMenuItem_Click(object sender, RoutedEventArgs e) => await CloseWindowAsync();
+
+    // Set once the user has confirmed closing the window, so the Close() that follows isn't
+    // cancelled again by AppWindow_Closing. _closingWindow guards against a second close request
+    // (X clicked again) while the first one's dialog is still up.
+    private bool _closeConfirmed;
+    private bool _closingWindow;
+
+    /// <summary>
+    /// The window's X button / Alt+F4: always cancelled here and replaced by
+    /// <see cref="CloseWindowAsync"/>, since this event can't wait for a dialog - it closes the
+    /// window for real itself once the user has answered.
+    /// </summary>
+    private async void AppWindow_Closing(Microsoft.UI.Windowing.AppWindow sender, Microsoft.UI.Windowing.AppWindowClosingEventArgs args)
     {
-        if (await ConfirmDiscardChangesAsync("Exiting will discard them."))
+        if (_closeConfirmed)
         {
-            Close();
+            return;
         }
+
+        args.Cancel = true;
+        await CloseWindowAsync();
+    }
+
+    /// <summary>Closes the window after asking about every tab's unsaved changes (see <see cref="ConfirmSaveTabsAsync"/>). The open tabs are left in place, so they're reopened on the next start.</summary>
+    private async Task CloseWindowAsync()
+    {
+        if (_closingWindow)
+        {
+            return;
+        }
+
+        _closingWindow = true;
+        try
+        {
+            if (!await ConfirmSaveTabsAsync(Tabs.ToList()))
+            {
+                return;
+            }
+        }
+        finally
+        {
+            _closingWindow = false;
+        }
+
+        _closeConfirmed = true;
+        Close();
     }
 
     /// <summary>Help → About: app name and version.</summary>
@@ -522,7 +619,7 @@ public sealed partial class MainWindow : Window
     {
         if (FileTreeView.SelectedNode?.Content is FileTreeNodeInfo { Kind: FileTreeNodeKind.Xaml } info)
         {
-            LoadFile(info.FullPath);
+            OpenFileInTab(info.FullPath);
         }
     }
 
@@ -682,7 +779,7 @@ public sealed partial class MainWindow : Window
 
         if (File.Exists(path))
         {
-            LoadFile(path);
+            OpenFileInTab(path);
         }
         else
         {
@@ -713,26 +810,391 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    /// <summary>Loads a `.xaml` file as the current document, resets undo/redo and dirty-tracking, refreshes the design surface, and adds it to Recent Files. On failure, shows the error in the status bar instead of throwing.</summary>
-    /// <param name="path">Absolute path of the `.xaml` file to load.</param>
-    /// <returns>True if the file was loaded.</returns>
-    private bool LoadFile(string path)
+    private static readonly string OpenTabsConfigPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "FabWinUIDesigner", "open-tabs.json");
+
+    /// <summary>The open tabs, in tab-strip order. The tab strip itself is the only list of them, so reordering by drag needs no bookkeeping.</summary>
+    private IEnumerable<DocumentTab> Tabs => DocumentTabView.TabItems.OfType<TabViewItem>().Select(item => (DocumentTab)item.Tag);
+
+    /// <summary>
+    /// Shows <paramref name="path"/> in a tab: switches to its tab if it's already open, otherwise
+    /// loads it into a new one (with no undo history and nothing unsaved) and adds it to Recent
+    /// Files. On failure, shows the error in the status bar instead of throwing.
+    /// </summary>
+    /// <param name="path">Absolute path of the `.xaml` file.</param>
+    private void OpenFileInTab(string path)
     {
+        var fullPath = Path.GetFullPath(path);
+        var existing = Tabs.FirstOrDefault(t => string.Equals(t.Session.FilePath, fullPath, StringComparison.OrdinalIgnoreCase));
+        if (existing is not null)
+        {
+            ActivateTab(existing);
+            return;
+        }
+
         try
         {
-            // A freshly-loaded file has no undo history and nothing unsaved yet.
-            _session = DocumentSession.Open(path);
-
-            RefreshDesignSurfaceFromDocument();
-            SelectDocumentRootAfterLayout();
-            AddRecentFile(path);
-            SetStatus($"Opened {Path.GetFileName(path)}");
-            return true;
+            AddTab(new DocumentTab(DocumentSession.Open(fullPath), untitledName: string.Empty), activate: true);
+            AddRecentFile(fullPath);
+            SetStatus($"Opened {Path.GetFileName(fullPath)}");
         }
         catch (Exception ex)
         {
-            SetStatus($"Failed to open {Path.GetFileName(path)}: {ex.Message}");
-            return false;
+            SetStatus($"Failed to open {Path.GetFileName(fullPath)}: {ex.Message}");
+        }
+    }
+
+    /// <summary>Adds <paramref name="tab"/> at the end of the tab strip, and shows it if <paramref name="activate"/>.</summary>
+    /// <param name="tab">The new tab.</param>
+    /// <param name="activate">True to make it the active tab.</param>
+    private void AddTab(DocumentTab tab, bool activate)
+    {
+        DocumentTabView.TabItems.Add(tab.Item);
+        if (activate)
+        {
+            ActivateTab(tab);
+        }
+    }
+
+    /// <summary>Makes <paramref name="tab"/> the selected tab and shows it (does nothing if it already is).</summary>
+    /// <param name="tab">The tab to show.</param>
+    private void ActivateTab(DocumentTab tab)
+    {
+        DocumentTabView.SelectedItem = tab.Item;
+
+        // Selecting normally lands in DocumentTabView_SelectionChanged, which switches; this
+        // covers the case where the event hasn't been raised (yet) by the time we get here.
+        SwitchToTab(tab);
+    }
+
+    private void DocumentTabView_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
+        SwitchToTab((DocumentTabView.SelectedItem as TabViewItem)?.Tag as DocumentTab);
+
+    /// <summary>
+    /// Makes <paramref name="tab"/> the one shown on the design surface and in the XAML editor.
+    /// XAML source typed in the tab being left but not applied yet is kept on that tab (see
+    /// <see cref="DocumentTab.UnappliedSourceText"/>) rather than applied or thrown away.
+    /// </summary>
+    /// <param name="tab">The tab to show, or null for none (no tab left).</param>
+    private void SwitchToTab(DocumentTab? tab)
+    {
+        if (ReferenceEquals(tab, _activeTab))
+        {
+            return;
+        }
+
+        if (_activeTab is not null)
+        {
+            _activeTab.ViewState = CaptureViewState();
+            _activeTab.UnappliedSourceText = _sourceEditPending ? XamlSourceView.Text : null;
+            _activeTab.UpdateHeader(_activeTab.IsDirtyWhileInactive);
+        }
+
+        _activeTab = tab;
+        ShowActiveTab();
+        SaveOpenTabs();
+    }
+
+    /// <summary>
+    /// Renders the active tab's document on the design surface and in the XAML editor (or empties
+    /// both when no tab is open). A tab shown before gets its caret, scroll positions and selection
+    /// back; one shown for the first time gets its root element selected, like a freshly opened file.
+    /// </summary>
+    private void ShowActiveTab()
+    {
+        SetXamlSourceErrors([]);
+        if (_activeTab is null)
+        {
+            SetXamlSourceText(string.Empty);
+            DesignSurfaceHost.Child = null;
+            _liveToDesign = new Dictionary<UIElement, DesignElement>();
+            ClearSelection();
+            UpdateCommandStates();
+            return;
+        }
+
+        RefreshDesignSurfaceFromDocument();
+        if (_activeTab.UnappliedSourceText is { } typedText)
+        {
+            // Back to where the user left this tab: their typed text in the editor, applied now if
+            // it's valid, or with its errors showing again if it isn't.
+            _activeTab.UnappliedSourceText = null;
+            SetXamlSourceText(typedText);
+            _sourceEditPending = true;
+            TryApplyXamlSourceEdit();
+        }
+
+        if (_activeTab.ViewState is { } viewState)
+        {
+            RestoreViewStateAfterLayout(viewState);
+        }
+        else
+        {
+            SelectDocumentRootAfterLayout();
+        }
+
+        UpdateCommandStates();
+    }
+
+    // True when the XAML editor was the last thing to have keyboard focus, not counting the tab
+    // strip - clicking a tab takes focus from the editor before the switch happens, so
+    // _xamlSourceViewHasFocus is already false by then. Tells the tab whether to give the editor
+    // focus back (and with it, a visible caret) when it's shown again.
+    private bool _xamlSourceViewWasLastFocused;
+
+    /// <summary>Keeps <see cref="_xamlSourceViewWasLastFocused"/> up to date as focus moves around the window.</summary>
+    private void RootGrid_GotFocus(object sender, RoutedEventArgs e)
+    {
+        for (var element = e.OriginalSource as DependencyObject; element is not null; element = VisualTreeHelper.GetParent(element))
+        {
+            if (ReferenceEquals(element, XamlSourceView))
+            {
+                _xamlSourceViewWasLastFocused = true;
+                return;
+            }
+
+            if (ReferenceEquals(element, DocumentTabView))
+            {
+                return;
+            }
+        }
+
+        _xamlSourceViewWasLastFocused = false;
+    }
+
+    /// <summary>Records the active tab's caret, scroll positions, selected element and whether the editor had focus, for <see cref="RestoreViewStateAfterLayout"/> when the tab is shown again.</summary>
+    /// <returns>The current view position.</returns>
+    private TabViewState CaptureViewState()
+    {
+        // The selected element is remembered by its position in document order rather than by
+        // reference, so it still resolves if the document object was swapped in the meantime
+        // (e.g. unapplied source text applied on return).
+        int? selectedIndex = null;
+        if (_selectedDesignElement is not null && CurrentDocument is not null)
+        {
+            var index = CurrentDocument.Root.Element.DescendantsAndSelf().ToList().IndexOf(_selectedDesignElement.Element);
+            selectedIndex = index >= 0 ? index : null;
+        }
+
+        var caret = XamlSourceView.CursorPosition;
+        return new TabViewState(
+            caret.LineNumber,
+            caret.CharacterPosition,
+            XamlSourceView.VerticalScroll,
+            XamlSourceView.HorizontalScroll,
+            DesignSurfaceScrollViewer.HorizontalOffset,
+            DesignSurfaceScrollViewer.VerticalOffset,
+            selectedIndex,
+            _xamlSourceViewWasLastFocused);
+    }
+
+    /// <summary>
+    /// Puts back a tab's caret, scroll positions and selected element once the freshly rendered
+    /// document has been laid out - deferred for the same reason as
+    /// <see cref="SelectDocumentRootAfterLayout"/>: scroll extents and adorner bounds only exist
+    /// after layout.
+    /// </summary>
+    /// <param name="state">What <see cref="CaptureViewState"/> recorded when the user left the tab.</param>
+    private void RestoreViewStateAfterLayout(TabViewState state)
+    {
+        var tab = _activeTab;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            // Switched to another tab again before this ran - that one restores its own state.
+            if (!ReferenceEquals(tab, _activeTab))
+            {
+                return;
+            }
+
+            DesignSurfaceHost.UpdateLayout();
+
+            // The caret is set first with scrollIntoView, so it's visible even if the editor
+            // clamps the exact scroll position that follows. Suppressed so the caret move isn't
+            // read as the user clicking into an element (see _suppressSourceSelectionSync) - the
+            // selection is restored separately below, and may differ from the caret's element.
+            _suppressSourceSelectionSync = true;
+            try
+            {
+                XamlSourceView.SetCursorPosition(state.CaretLine, state.CaretCharacter, scrollIntoView: true, autoClamp: true);
+                XamlSourceView.VerticalScroll = state.EditorVerticalScroll;
+                XamlSourceView.HorizontalScroll = state.EditorHorizontalScroll;
+            }
+            finally
+            {
+                _suppressSourceSelectionSync = false;
+            }
+
+            UpdateCaretStatus();
+            DesignSurfaceScrollViewer.ChangeView(state.DesignHorizontalOffset, state.DesignVerticalOffset, null, disableAnimation: true);
+
+            if (state.SelectedElementIndex is int index
+                && CurrentDocument?.Root.Element.DescendantsAndSelf().ElementAtOrDefault(index) is { } element)
+            {
+                var entry = _liveToDesign.FirstOrDefault(kvp => ReferenceEquals(kvp.Value.Element, element));
+                if (entry.Key is not null)
+                {
+                    Select(entry.Key, entry.Value);
+                }
+            }
+
+            // Last, so nothing above takes focus away again. The editor only draws its caret
+            // while it has focus.
+            if (state.EditorHadFocus)
+            {
+                XamlSourceView.Focus(FocusState.Programmatic);
+            }
+        });
+    }
+
+    /// <summary>True if <paramref name="tab"/> has unsaved changes, including XAML source typed but not applied yet.</summary>
+    /// <param name="tab">Any open tab.</param>
+    private bool IsTabDirty(DocumentTab tab) =>
+        ReferenceEquals(tab, _activeTab)
+            ? _sourceEditPending || tab.Session.IsModified
+            : tab.IsDirtyWhileInactive;
+
+    private async void DocumentTabView_TabCloseRequested(TabView sender, TabViewTabCloseRequestedEventArgs args)
+    {
+        if (args.Tab.Tag is DocumentTab tab)
+        {
+            await CloseTabAsync(tab);
+        }
+    }
+
+    /// <summary>File → Close: closes the active tab.</summary>
+    private async void CloseMenuItem_Click(object sender, RoutedEventArgs e) => await CloseActiveTabAsync();
+
+    /// <summary>Closes the active tab, if any (File → Close, Ctrl+W).</summary>
+    private async Task CloseActiveTabAsync()
+    {
+        if (_activeTab is not null)
+        {
+            await CloseTabAsync(_activeTab);
+        }
+    }
+
+    /// <summary>Closes <paramref name="tab"/> after offering to save its unsaved changes. Closing the active tab shows its right-hand neighbour (or left-hand one, for the last tab).</summary>
+    /// <param name="tab">The tab to close.</param>
+    private async Task CloseTabAsync(DocumentTab tab)
+    {
+        if (!await ConfirmSaveTabsAsync([tab]))
+        {
+            return;
+        }
+
+        var items = DocumentTabView.TabItems;
+        var index = items.IndexOf(tab.Item);
+        if (index < 0)
+        {
+            // Already closed while the dialog was up.
+            return;
+        }
+
+        // Pick the next tab before removing this one, rather than relying on whatever the
+        // TabView selects by itself when its selected item goes away.
+        if (ReferenceEquals(tab, _activeTab))
+        {
+            var neighbour = items.Count == 1 ? null : items[index + 1 < items.Count ? index + 1 : index - 1];
+            if (neighbour is TabViewItem { Tag: DocumentTab next })
+            {
+                ActivateTab(next);
+            }
+            else
+            {
+                SwitchToTab(null);
+            }
+        }
+
+        items.Remove(tab.Item);
+        SetStatus($"Closed {tab.DisplayName}");
+    }
+
+    /// <summary>Tabs added, removed or reordered: remembers the new list for the next start.</summary>
+    private void DocumentTabView_TabItemsChanged(TabView sender, Windows.Foundation.Collections.IVectorChangedEventArgs args) => SaveOpenTabs();
+
+    /// <summary>On-disk shape of <see cref="OpenTabsConfigPath"/>.</summary>
+    /// <param name="Files">Paths of the open tabs' files, in tab order. Never-saved tabs aren't included.</param>
+    /// <param name="ActiveIndex">Index in <paramref name="Files"/> of the active tab, or -1 if it isn't one of them.</param>
+    private sealed record OpenTabList(List<string> Files, int ActiveIndex);
+
+    // Set while RestoreOpenTabs adds tabs, so each addition doesn't rewrite the list it's reading.
+    private bool _restoringTabs;
+
+    /// <summary>Writes the open tabs' paths to <see cref="OpenTabsConfigPath"/>, for <see cref="RestoreOpenTabs"/> on the next start. Best-effort - a write failure is swallowed.</summary>
+    private void SaveOpenTabs()
+    {
+        if (_restoringTabs)
+        {
+            return;
+        }
+
+        try
+        {
+            var saved = Tabs.Where(t => t.Session.FilePath is not null).ToList();
+            var list = new OpenTabList(saved.Select(t => t.Session.FilePath!).ToList(), _activeTab is null ? -1 : saved.IndexOf(_activeTab));
+            Directory.CreateDirectory(Path.GetDirectoryName(OpenTabsConfigPath)!);
+            File.WriteAllText(OpenTabsConfigPath, JsonSerializer.Serialize(list));
+        }
+        catch (Exception)
+        {
+            // Best-effort - the tabs just won't be reopened next time.
+        }
+    }
+
+    /// <summary>
+    /// Reopens the tabs that were open when the app was last closed, and shows the one that was
+    /// active. Files that no longer exist or fail to load are skipped silently. Only the active
+    /// tab is rendered; the others are rendered when switched to.
+    /// </summary>
+    private void RestoreOpenTabs()
+    {
+        OpenTabList? list;
+        try
+        {
+            list = File.Exists(OpenTabsConfigPath)
+                ? JsonSerializer.Deserialize<OpenTabList>(File.ReadAllText(OpenTabsConfigPath))
+                : null;
+        }
+        catch (Exception)
+        {
+            // Corrupt/unreadable - start with no tabs.
+            return;
+        }
+
+        if (list is null || list.Files.Count == 0)
+        {
+            return;
+        }
+
+        DocumentTab? toActivate = null;
+        _restoringTabs = true;
+        try
+        {
+            for (var i = 0; i < list.Files.Count; i++)
+            {
+                try
+                {
+                    var tab = new DocumentTab(DocumentSession.Open(list.Files[i]), untitledName: string.Empty);
+                    AddTab(tab, activate: false);
+                    if (i == list.ActiveIndex || toActivate is null)
+                    {
+                        toActivate = tab;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    WriteLog($"RestoreOpenTabs skipped {list.Files[i]}: {ex.Message}");
+                }
+            }
+        }
+        finally
+        {
+            _restoringTabs = false;
+        }
+
+        if (toActivate is not null)
+        {
+            ActivateTab(toActivate);
         }
     }
 
@@ -740,10 +1202,10 @@ public sealed partial class MainWindow : Window
     // which must not start a second check.
     private bool _checkingExternalChanges;
 
-    /// <summary>When the window gets focus back, checks whether the open file was changed outside the designer.</summary>
+    /// <summary>When the window gets focus back, checks whether any open file was changed outside the designer.</summary>
     private async void MainWindow_Activated(object sender, Microsoft.UI.Xaml.WindowActivatedEventArgs args)
     {
-        if (args.WindowActivationState == Microsoft.UI.Xaml.WindowActivationState.Deactivated || _checkingExternalChanges || _session is null)
+        if (args.WindowActivationState == Microsoft.UI.Xaml.WindowActivationState.Deactivated || _checkingExternalChanges || _activeTab is null)
         {
             return;
         }
@@ -751,7 +1213,15 @@ public sealed partial class MainWindow : Window
         _checkingExternalChanges = true;
         try
         {
-            await CheckForExternalChangesAsync();
+            // A copy: tabs aren't opened or closed while a check's dialog is up, but the list is
+            // enumerated across awaits.
+            foreach (var tab in Tabs.ToList())
+            {
+                if (!await CheckForExternalChangesAsync(tab))
+                {
+                    break;
+                }
+            }
         }
         finally
         {
@@ -760,7 +1230,7 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// VS-style handling of a change made to the open file by another program, checked when the
+    /// VS-style handling of a change made to an open file by another program, checked when the
     /// designer window is activated rather than with a file watcher - nothing pops up while you're
     /// working in the other program, and several saves there become one question here.
     /// Changed: ask Reload / Keep my version (always asked, even with no unsaved changes, so
@@ -768,19 +1238,21 @@ public sealed partial class MainWindow : Window
     /// open. Keeping either way marks the document unsaved, so the next Save deliberately writes
     /// this version over the outside change.
     /// </summary>
-    private async Task CheckForExternalChangesAsync()
+    /// <param name="tab">The tab whose file to check.</param>
+    /// <returns>False if the dialog couldn't be shown (another one is open), so the caller stops checking for now; true otherwise.</returns>
+    private async Task<bool> CheckForExternalChangesAsync(DocumentTab tab)
     {
-        var session = _session;
-        var path = session?.FilePath;
-        if (session is null || path is null)
+        var session = tab.Session;
+        var path = session.FilePath;
+        if (path is null)
         {
-            return;
+            return true;
         }
 
         var state = session.CheckDisk();
         if (state == DiskState.Unchanged)
         {
-            return;
+            return true;
         }
 
         var name = Path.GetFileName(path);
@@ -788,7 +1260,7 @@ public sealed partial class MainWindow : Window
             ? new ContentDialog
             {
                 Title = "File changed outside the designer",
-                Content = SaveButton.IsEnabled
+                Content = IsTabDirty(tab)
                     ? $"{name} was changed by another program.\n\nReload it? Your unsaved changes in the designer will be lost."
                     : $"{name} was changed by another program.\n\nReload it?",
                 PrimaryButtonText = "Reload",
@@ -813,23 +1285,64 @@ public sealed partial class MainWindow : Window
         {
             // Another ContentDialog is already open (only one can be at a time). The disk state
             // wasn't accepted, so the next activation asks again.
-            return;
+            return false;
         }
 
         if (state == DiskState.Changed && result == ContentDialogResult.Primary)
         {
-            if (LoadFile(path))
-            {
-                SetStatus($"Reloaded {name}");
-            }
-
-            return;
+            ReloadTab(tab);
+            return true;
         }
 
         session.AcceptDiskState();
         session.MarkModified();
-        UpdateCommandStates();
+        RefreshTabDirtyState(tab);
         SetStatus(state == DiskState.Changed ? $"Kept the designer's version of {name}" : $"{name} was deleted or renamed");
+        return true;
+    }
+
+    /// <summary>Replaces <paramref name="tab"/>'s document with its file's current content on disk (no undo history, nothing unsaved), re-rendering it if it's the active tab.</summary>
+    /// <param name="tab">A tab whose file exists on disk.</param>
+    private void ReloadTab(DocumentTab tab)
+    {
+        var name = tab.DisplayName;
+        try
+        {
+            tab.Session = DocumentSession.Open(tab.Session.FilePath!);
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Failed to reload {name}: {ex.Message}");
+            return;
+        }
+
+        // The content changed under the old caret/selection, so the tab starts fresh like a newly opened file.
+        tab.UnappliedSourceText = null;
+        tab.ViewState = null;
+        if (ReferenceEquals(tab, _activeTab))
+        {
+            ShowActiveTab();
+        }
+        else
+        {
+            RefreshTabDirtyState(tab);
+        }
+
+        SetStatus($"Reloaded {name}");
+    }
+
+    /// <summary>Updates the unsaved marker for <paramref name="tab"/>: its header, plus the toolbar and window title if it's the active tab.</summary>
+    /// <param name="tab">Any open tab.</param>
+    private void RefreshTabDirtyState(DocumentTab tab)
+    {
+        if (ReferenceEquals(tab, _activeTab))
+        {
+            UpdateCommandStates();
+        }
+        else
+        {
+            tab.UpdateHeader(tab.IsDirtyWhileInactive);
+        }
     }
 
     /// <summary>
@@ -1458,7 +1971,8 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Escape deselects ("cancel"); Delete removes the selected control; Ctrl+S saves. Escape/
+    /// Escape deselects ("cancel"); Delete removes the selected control; Ctrl+S saves; Ctrl+N /
+    /// Ctrl+O / Ctrl+Shift+O / Ctrl+W are New File / Open File / Open Folder / Close. Escape/
     /// Delete/Ctrl+Z/Ctrl+Y are guarded against a TextBox having focus (e.g. editing a property
     /// value or the XAML source view) so those keys edit text as expected there instead of
     /// acting on the design surface. Ctrl+S is deliberately exempt from that guard - it commits
@@ -1478,13 +1992,17 @@ public sealed partial class MainWindow : Window
 
         // File-level shortcuts work regardless of focus, like Ctrl+S - neither a TextBox nor the
         // XAML editor uses them for anything of its own.
-        if (ctrlDown && e.Key is VirtualKey.N or VirtualKey.O)
+        if (ctrlDown && e.Key is VirtualKey.N or VirtualKey.O or VirtualKey.W)
         {
             var shiftDown = InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Shift).HasFlag(CoreVirtualKeyStates.Down);
             e.Handled = true;
             if (e.Key == VirtualKey.N)
             {
-                await NewFileAsync();
+                NewFile();
+            }
+            else if (e.Key == VirtualKey.W)
+            {
+                await CloseActiveTabAsync();
             }
             else if (shiftDown)
             {
@@ -2787,12 +3305,13 @@ public sealed partial class MainWindow : Window
         var hasDocument = CurrentDocument is not null;
         // Text typed in the XAML source but not applied yet counts as unsaved too.
         SaveButton.IsEnabled = SaveMenuItem.IsEnabled = hasDocument && (_sourceEditPending || _session!.IsModified);
-        SaveAsMenuItem.IsEnabled = hasDocument;
+        SaveAsMenuItem.IsEnabled = CloseMenuItem.IsEnabled = hasDocument;
         UndoButton.IsEnabled = UndoMenuItem.IsEnabled = _session?.CanUndo == true;
         RedoButton.IsEnabled = RedoMenuItem.IsEnabled = _session?.CanRedo == true;
         FormatToolbarButton.IsEnabled = FormatMenuItem.IsEnabled = hasDocument;
         UpdateSelectionCommandStates();
         UpdateDocumentStatus();
+        _activeTab?.UpdateHeader(SaveButton.IsEnabled);
     }
 
     private const string AppTitle = "FabWinUI Designer";
@@ -2813,7 +3332,7 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        var name = CurrentFilePath is null ? "Untitled" : Path.GetFileName(CurrentFilePath);
+        var name = _activeTab!.DisplayName;
         Title = $"{name}{(SaveButton.IsEnabled ? "*" : string.Empty)} - {AppTitle}";
         StatusFilePathText.Text = CurrentFilePath ?? "(not saved yet)";
     }

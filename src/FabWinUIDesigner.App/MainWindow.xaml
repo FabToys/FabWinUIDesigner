@@ -39,6 +39,7 @@
                     <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE74E;" /></MenuFlyoutItem.Icon>
                 </MenuFlyoutItem>
                 <MenuFlyoutItem x:Name="SaveAsMenuItem" Text="Save As..." Click="SaveAsMenuItem_Click" IsEnabled="False" />
+                <MenuFlyoutItem x:Name="CloseMenuItem" Text="Close" Click="CloseMenuItem_Click" IsEnabled="False" KeyboardAcceleratorTextOverride="Ctrl+W" />
                 <MenuFlyoutSeparator />
                 <MenuFlyoutSubItem x:Name="RecentFilesMenu" Text="Recent Files">
                     <MenuFlyoutSubItem.Icon><FontIcon Glyph="&#xE81C;" /></MenuFlyoutSubItem.Icon>
@@ -124,19 +125,33 @@
         <!-- Draggable splitter: Toolbox <-> Center -->
         <local:SplitterThumb x:Name="ToolboxSplitter" Grid.Row="2" Grid.Column="1" Width="8" Background="#FFE0E0E0" HorizontalAlignment="Stretch" />
 
-        <!-- Center: design surface (pasteboard) above, XAML source view below -->
+        <!-- Center: open-document tabs, then design surface (pasteboard) above, XAML source view below -->
         <Grid Grid.Row="2" Grid.Column="2">
             <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition x:Name="DesignSurfaceRow" Height="*" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition x:Name="XamlSourceRow" Height="220" />
             </Grid.RowDefinitions>
 
+            <!-- Open documents, like VS's document tabs. Headers only: the tabs carry no Content,
+                 since the one design surface and XAML editor below show whichever tab is active
+                 (items are created in code, see DocumentTab). -->
+            <TabView
+                x:Name="DocumentTabView"
+                Grid.Row="0"
+                IsAddTabButtonVisible="False"
+                TabWidthMode="SizeToContent"
+                CloseButtonOverlayMode="OnPointerOver"
+                SelectionChanged="DocumentTabView_SelectionChanged"
+                TabCloseRequested="DocumentTabView_TabCloseRequested"
+                TabItemsChanged="DocumentTabView_TabItemsChanged" />
+
             <!-- Design toolbar: icon buttons for design-surface-view settings (as opposed to the
                  XAML Source strip's document operations, e.g. Format). Snap to Grid lives here
                  first; room for future design-view toggles (e.g. alignment guides) alongside it. -->
-            <Border Grid.Row="0" Background="#FFF3F3F3" BorderBrush="Gray" BorderThickness="0,0,0,1" Padding="4">
+            <Border Grid.Row="1" Background="#FFF3F3F3" BorderBrush="Gray" BorderThickness="0,0,0,1" Padding="4">
                 <StackPanel Orientation="Horizontal" Spacing="2">
                     <ToggleButton
                         x:Name="SnapToGridToggle"
@@ -151,8 +166,8 @@
 
             <!-- Pasteboard: gray background behind the page, like the WPF/VS designer's design
                  tab background outside the window's own bounds. -->
-            <Border Grid.Row="1" Background="#FFE6E6E6" BorderBrush="Gray" BorderThickness="0,0,0,1">
-                <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+            <Border Grid.Row="2" Background="#FFE6E6E6" BorderBrush="Gray" BorderThickness="0,0,0,1">
+                <ScrollViewer x:Name="DesignSurfaceScrollViewer" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
                     <Grid>
                         <!-- The page itself: white and bordered so it reads as sitting on top of the
                              pasteboard. GridOverlay (below) draws on top of it, not behind it - the
@@ -244,9 +259,9 @@
             </Border>
 
             <!-- Draggable splitter: Design surface <-> XAML source -->
-            <local:SplitterThumb x:Name="DesignXamlSplitter" Grid.Row="2" Height="8" Background="#FFE0E0E0" VerticalAlignment="Stretch" />
+            <local:SplitterThumb x:Name="DesignXamlSplitter" Grid.Row="3" Height="8" Background="#FFE0E0E0" VerticalAlignment="Stretch" />
 
-            <Grid Grid.Row="3">
+            <Grid Grid.Row="4">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
